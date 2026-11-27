@@ -615,7 +615,7 @@ class BackupTests(unittest.TestCase):
         made = [backup.make_backup({"companies": lock, "auth": lock}) for _ in range(3)]
         self.assertEqual(len(backup.backups()), 2)  # oldest rotated away
         self.assertFalse(made[0].exists())
-        with tarfile.open(made[-1]) as tar:
+        with backup.open_archive(made[-1]) as tar:
             names = sorted(tar.getnames())
         self.assertEqual(names, ["auth.json", "companies/co-1.json", "uploads/co-1/file-1.pdf"])
         self.assertIsNotNone(backup.newest_time())
@@ -849,7 +849,7 @@ class ReviewFourOfflineTests(unittest.TestCase):
                 (Path(tmp) / "companies" / "snapshots" / "co-1-before.json").write_text("{}")
                 (Path(tmp) / "auth.json").write_text("{}")
                 made = backup.make_backup()
-                with tarfile.open(made) as tar:
+                with backup.open_archive(made) as tar:
                     self.assertIn("companies/snapshots/co-1-before.json", tar.getnames())
                 bad = Path(tmp) / "bad.tar.gz"
                 with tarfile.open(bad, "w:gz") as tar:

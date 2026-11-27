@@ -30,6 +30,7 @@ from urllib.parse import parse_qsl
 
 import domain
 import storage
+import vault
 
 UPLOADS = storage.DATA_DIR / "uploads"
 MAX_FILE_BYTES = 15 * 1024 * 1024
@@ -869,26 +870,55 @@ def tokens_path() -> Path:
     return storage.DATA_DIR / "inbound_tokens.json"
 
 
-def load_tokens() -> dict[str, Any]:
-    import json
+# The file is keyed by a keyed hash of each token (H3, vault.lookup), so a copy of it doesn't
+# hand anyone the addresses; the token itself is kept encrypted for showing it to the owner.
+# A file from before that (keyed by the raw token) is read as it is and converted on the next write.
+
+def _token_key(token: str) -> str:
+    return vault.lookup(token, "inbound")
+
+
+def _entry(company_id: str, kind: str, token: str, created_at: str) -> dict[str, Any]:
+    return {"company_id": company_id, "kind": kind, "created_at": created_at, "token": vault.seal(token, f"inbound:{company_id}")}
+
+
+def _token_of(entry: dict[str, Any]) -> str:
+    return vault.open_sealed(entry.get("token") or "", f"inbound:{entry['company_id']}")
+
+
+def _read_tokens() -> tuple[dict[str, Any], bool]:
+    """The file, with hashed keys (converted in memory if it is from before that), and whether
+    it was converted, so a caller that writes puts the new form on disk."""
     p = tokens_path()
-    return json.loads(p.read_text()) if p.exists() else {}
+    data = json.loads(p.read_text()) if p.exists() else {}
+    old = [k for k in data if not k.startswith(vault.LOOKUP_PREFIX)]
+    for tok in old:
+        v = data.pop(tok)
+        data[_token_key(tok)] = _entry(v["company_id"], v["kind"], tok, v.get("created_at", ""))
+    return data, bool(old)
+
+
+def load_tokens() -> dict[str, Any]:
+    return _read_tokens()[0]
+
+
+def _save_tokens(data: dict[str, Any]) -> None:
+    storage.write_json(tokens_path(), data)
 
 
 def company_tokens(company_id: str, create: bool = True) -> dict[str, str]:
     """The secret tokens in this company's inbound email, SMS and calendar URLs."""
     with TOKENS_LOCK:
-        data = load_tokens()
-        mine = {kind: tok for tok, v in data.items() if v["company_id"] == company_id for kind in [v["kind"]]}
-        changed = False
+        data, changed = _read_tokens()
+        mine = {v["kind"]: _token_of(v) for v in data.values() if v["company_id"] == company_id}
         for kind in ("email", "sms", "calendar"):
             if kind not in mine and create:
                 tok = secrets.token_urlsafe(18)
-                data[tok] = {"company_id": company_id, "kind": kind, "created_at": utcnow()}
+                data[_token_key(tok)] = _entry(company_id, kind, tok, utcnow())
                 mine[kind] = tok
                 changed = True
         if changed:
-            storage.write_json(tokens_path(), data)
+            _save_tokens(data)
         return mine
 
 
@@ -896,14 +926,16 @@ def rotate_token(company_id: str, kind: str) -> str:
     with TOKENS_LOCK:
         data = {t: v for t, v in load_tokens().items() if not (v["company_id"] == company_id and v["kind"] == kind)}
         tok = secrets.token_urlsafe(18)
-        data[tok] = {"company_id": company_id, "kind": kind, "created_at": utcnow()}
-        storage.write_json(tokens_path(), data)
+        data[_token_key(tok)] = _entry(company_id, kind, tok, utcnow())
+        _save_tokens(data)
         return tok
 
 
 def company_for_token(token: str, kind: str) -> str | None:
-    entry = load_tokens().get(token or "")
-    if entry and entry["kind"] == kind:
+    if not token:
+        return None
+    entry = load_tokens().get(_token_key(token))
+    if isinstance(entry, dict) and entry.get("kind") == kind:
         return entry["company_id"]
     return None
 
@@ -912,7 +944,7 @@ def forget_company(company_id: str) -> None:
     """Drop a deleted company's inbound and calendar tokens, so its addresses stop working."""
     with TOKENS_LOCK:
         data = {t: v for t, v in load_tokens().items() if v["company_id"] != company_id}
-        storage.write_json(tokens_path(), data)
+        _save_tokens(data)
 
 # ---------- what providers and the phone post (moved from server.py, R6-08) ----------
 

@@ -24,7 +24,7 @@ All data lives in one directory, set by the `DURACASH_DATA_DIR` environment vari
 - `companies/duracash.db`: every company, in one SQLite database (WAL mode). Each job, audit row, email, inbox item, daily record and file is its own row, so a save writes only what changed, and companies don't wait on each other (each has its own lock). Schema migrations are in `store.py`.
 - `companies/<company_id>.json`: the older one-file-per-company layout, used when `DURACASH_STORAGE=json`. On its first start the SQLite store imports any such files and moves them to `companies/imported-json-<time>/`; it never deletes them.
 - `companies/snapshots/`: a copy of a company taken before each confirmed reset
-- `auth.json`: users, password hashes, and the SHA-256 of each session token (a copy of the file signs nobody in)
+- `auth.json`: users, password hashes, and the SHA-256 of each session token (a copy of the file signs nobody in); two-step sign-in keys are encrypted with the server key (`DURACASH_SECRET_KEY`)
 
 JSON files are written to a temp file and renamed into place, and SQLite commits each save as one transaction, so a crash never leaves half a write. Backups are described under "Backups, health and logs". `GET /api/export` downloads the signed-in company's data as JSON, whichever layout is in use.
 
@@ -32,7 +32,7 @@ On Render, the default filesystem does not survive a deploy or restart. `render.
 
 Set `COOKIE_SECURE=1` in production to force the `Secure` flag on the session cookie and send `Strict-Transport-Security` (one year, subdomains included) with every answer. Without it, the cookie flag is set when the request arrives with `X-Forwarded-Proto: https`.
 
-Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_tokens.json` (the secret parts of each company's inbound email, SMS and calendar addresses), `helper_answers.json` (helper answers added in the app) and `helper_log.json` (questions asked of the helper).
+Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_tokens.json` (the secret parts of each company's inbound email, SMS and calendar addresses, looked up by a keyed hash and kept encrypted), `qbo_connections.json` (QuickBooks tokens, encrypted), `audit_anchors.json` (the daily audit check's anchors), `secret.key` (the server key on a laptop, when `DURACASH_SECRET_KEY` isn't set), `helper_answers.json` (helper answers added in the app) and `helper_log.json` (questions asked of the helper).
 
 ### Settings
 
@@ -48,6 +48,7 @@ Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_t
 | `BILLING_ENFORCE`, `BILLING_GRACE_DAYS` | `BILLING_ENFORCE=1` makes a company read-only (never deleted) when its subscription is unpaid or cancelled, or when the trial ended more than `BILLING_GRACE_DAYS` (14) ago with no subscription. A declined card that Stripe is still retrying only shows a warning. Off by default. |
 | `QBO_CLIENT_ID`, `QBO_CLIENT_SECRET` | The Intuit Developer app's keys; with them, owners can connect QuickBooks (read-only) on Money › Payments. Add `<DURACASH_URL>/api/qbo/callback` as a redirect URI in the Intuit app. `QBO_ENV=production` for real companies; the default is the sandbox. Tokens live in `qbo_connections.json`, which the backups hold, so a restore keeps the connection (one that expired meanwhile needs Connect again). |
 | `DURACASH_STORAGE` | `json` keeps the one-file-per-company layout. Unset (the default) uses SQLite. |
+| `DURACASH_SECRET_KEY` | The server key, at least 32 characters: make one with `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`. It encrypts two-step sign-in keys, QuickBooks tokens, the secret part of each inbound address and the local backups, and keys the audit trail (`vault.py`). Production and staging refuse to start without it; elsewhere one is made once in `<data dir>/secret.key`. Keep a copy in both password managers: without it the local backups can't be read, two-step sign-in has to be set up again and QuickBooks connected again. No backup holds it. |
 | `DURACASH_ENV` | `production` turns the demo account off unless `DURACASH_DEMO=readonly` (when off: not created, can't sign in, old demo sessions end) and refuses to start unless `DURACASH_DATA_DIR` is an existing directory, `COOKIE_SECURE=1` and `DURACASH_URL` is an `https://` address. Unset everywhere else. |
 | `DURACASH_DATA_PERSISTENT` | `1` once a deploy has been seen to keep the data. Until then the landing page says "Demo: data may be erased". |
 | `COOKIE_SECURE` | `1` forces the Secure cookie flag and sends `Strict-Transport-Security`. |
@@ -60,7 +61,9 @@ Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_t
 | `LEGAL_ENTITY`, `LEGAL_ADDRESS`, `LEGAL_EMAIL`, `LEGAL_STATE`, `DATA_REGION` | Company details shown in the Terms of Service and Privacy Policy (`/terms`, `/privacy`). Until all are set and `LEGAL_REVIEWED=1`, both pages say they are a draft. |
 | `LEGAL_REVIEWED` | `1` once a lawyer has reviewed the text in `legal/` and the details above are filled in. |
 | `BACKUP_HOURS` | Hours between automatic backups, default 24; `0` turns them off. |
-| `BACKUP_KEEP` | How many backups to keep, default 14. |
+| `BACKUP_KEEP` | At most this many local backups are kept, default 14. |
+| `BACKUP_KEEP_DAYS` | Local backups, what a restore moved aside (`pre-restore-<time>/`) and copies of files that couldn't be read (`*.bad-*`) are removed once this many days old, default 14. The privacy policy quotes it. |
+| `BACKUP_OFFSITE_DAYS` | How long the off-site bucket keeps a copy (its lifecycle rule, set at the provider), default 35. Only the privacy policy uses it; keep the two the same. |
 | `BACKUP_UPLOADS` | `0` leaves uploaded files out of the local backups (they can be large; each backup holds them all). The off-site copy still has them, and a restore of such a backup leaves the uploads on the disk in place. Default: included. |
 | `BACKUP_S3_ENDPOINT`, `BACKUP_S3_BUCKET`, `BACKUP_S3_REGION`, `BACKUP_S3_KEY_ID`, `BACKUP_S3_SECRET` | S3-compatible storage for off-site copies, e.g. Backblaze B2 (`https://s3.us-west-004.backblazeb2.com`, region `us-west-004`). Use a write-only application key and a bucket with Object Lock. All five set turns the upload on. |
 | `BACKUP_S3_PREFIX` | Folder in the bucket, default `duracash/`. |
@@ -136,7 +139,7 @@ Approved pay apps, drafts sent for the client's review, follow-ups, waivers and 
 
 ## Backups, health and logs
 
-- `backup.py`: one backup on start-up if the newest is older than `BACKUP_HOURS`, then every `BACKUP_HOURS`, as `.tar.gz` files in `<data dir>/backups` (accounts, companies, inbound tokens, helper files, the mail counter and uploads), keeping `BACKUP_KEEP`. They are on the same disk as the data, so when the `BACKUP_S3_*` settings are filled in, each new backup is also encrypted with age and uploaded (`offsite.py`); `python3 backup.py upload [FILE]` does one by hand. To restore an off-site copy: download the `.age` file, `age -d -i key.txt FILE.age > backup.tar.gz`, then `python3 backup.py restore backup.tar.gz`. `python3 backup.py now|list|restore FILE|drill [FILE]` (drill: restore into a temporary folder and check it reads, without touching the live data; runbook 2); restore (server stopped) first unpacks into a staging folder and checks the archive is complete (it must hold `auth.json` and `companies/`, with nothing outside the data directory); only then does it move the current data aside to `pre-restore-<time>/` and swap the backup in. Company snapshots taken before a reset are included.
+- `backup.py`: one backup on start-up if the newest is older than `BACKUP_HOURS`, then every `BACKUP_HOURS`, as `.tar.gz.enc` files in `<data dir>/backups` (accounts, companies, inbound tokens, helper files, the mail counter and uploads), encrypted with the server key (`DURACASH_SECRET_KEY`; older plain `.tar.gz` backups still restore). An hourly sweep removes backups older than `BACKUP_KEEP_DAYS` or beyond the newest `BACKUP_KEEP`, and restore leftovers and `*.bad-*` copies older than `BACKUP_KEEP_DAYS`. They are on the same disk as the data, so when the `BACKUP_S3_*` settings are filled in, each new backup is also encrypted with age (from the plain archive, so the age key alone opens it) and uploaded (`offsite.py`); `python3 backup.py upload [FILE]` does one by hand. To restore an off-site copy: download the `.age` file, `age -d -i key.txt FILE.age > backup.tar.gz`, then `python3 backup.py restore backup.tar.gz`. `python3 backup.py now|list|restore FILE|drill [FILE]` (drill: restore into a temporary folder and check it reads, without touching the live data; runbook 2); restore (server stopped) first unpacks into a staging folder and checks the archive is complete (it must hold `auth.json` and `companies/`, with nothing outside the data directory); only then does it move the current data aside to `pre-restore-<time>/` and swap the backup in. Company snapshots taken before a reset are included.
 - `GET /healthz`: no sign-in; `ok`, whether the data directory is writable and has 200 MB free (503 if not; `disk_free_mb` says how much), whether email is set up, the time of the last backup and of the last off-site upload, and the env. Point an uptime monitor (for example Better Stack's free tier) at it: it is the only thing that notices the server being down.
 - Logs: one JSON line per request on stderr (time, method, path, status, milliseconds, request id). Query strings and the secret parts of inbound and calendar addresses are removed. A crash logs its traceback with the request id, and the user sees the same id to quote. With `ALERT_WEBHOOK_URL` set, each crash also posts a one-line alert (`alerts.py`).
 
@@ -217,7 +220,7 @@ Tests write to a temporary directory, never to `data/`. GitHub Actions (`.github
 - `payer_page.py`: the client's page for a pay app (`/p/...`: Mark as received, Approve for payment, Send a question) and the change-order signing page (`/s/...`)
 - `mail_events.py`: bounce and spam-complaint webhooks from the mail provider
 - `migrations.py`: the company-file schema version and the steps between versions, run on load
-- `audit_check.py`: checks every company's audit hash chain (run nightly)
+- `audit_check.py`: checks every company's audit hash chain (the server runs it daily from its hourly loop and alerts on a broken one; by hand: `python3 audit_check.py`)
 - `admin.py`: founder shell commands: list companies, find an email, delete a company on request, end sessions
 - `docs/runbooks.md`: deploy, restore, rotate a secret, delete a company, incident
 - `legal.py`, `legal/`: the Terms of Service and Privacy Policy

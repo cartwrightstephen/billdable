@@ -5,8 +5,17 @@ then every BACKUP_HOURS (default 24; 0 turns it off). Each backup is a
 .tar.gz in <data dir>/backups holding auth.json, every company file, the
 inbound tokens, the helper files, the mail counter, the list of deleted
 companies, the QuickBooks connections, the monthly and daily job records
-(R6-06) and (unless BACKUP_UPLOADS=0) the uploaded files. The newest
-BACKUP_KEEP (default 14) are kept.
+(R6-06) and (unless BACKUP_UPLOADS=0) the uploaded files.
+
+Each local backup is encrypted with the server key (H3, vault.py: DURACASH_SECRET_KEY) and
+named .tar.gz.enc; restore and drill decrypt it, and still read the plain .tar.gz backups made
+before. Without the key a local backup can't be read: keep a copy of DURACASH_SECRET_KEY in the
+password manager.
+
+Retention (M5): a local backup is removed once it is BACKUP_KEEP_DAYS old (default 14), and
+beyond the newest BACKUP_KEEP (default 14) whatever its age. The same days apply to what a
+restore moved aside (pre-restore-<time>/) and to the copies kept of files that couldn't be read
+(<name>.bad-<time>). The hourly sweep runs even when BACKUP_HOURS=0.
 
 These backups sit on the same disk as the data. They protect against a bad
 change or a bug, not against losing the disk. When the BACKUP_S3_* settings
@@ -34,7 +43,7 @@ import sys
 import tarfile
 import threading
 import time
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -43,6 +52,7 @@ import alerts
 import offsite
 import storage
 import store
+import vault
 
 # Files at the top of the data directory that a backup holds and a restore puts back. Each is
 # small and guarded by its own lock, if any (the key in make_backup's `locks`).
@@ -54,6 +64,7 @@ TOP_NAMES = tuple(name for name, _ in TOP_FILES)
 PREFIX = "duracash-"
 OLD_PREFIX = "billdable-"  # backups made before the rename to Duracash
 SUFFIX = ".tar.gz"
+ENC_SUFFIX = ".tar.gz.enc"   # encrypted with the server key (H3)
 _RUN_LOCK = threading.Lock()
 
 
@@ -67,6 +78,8 @@ def settings() -> dict[str, int]:
     return {
         "hours": num("BACKUP_HOURS", 24),
         "keep": max(1, num("BACKUP_KEEP", 14)),
+        "keep_days": max(1, num("BACKUP_KEEP_DAYS", 14)),
+        "offsite_days": max(1, num("BACKUP_OFFSITE_DAYS", 35)),
         "uploads": 0 if os.environ.get("BACKUP_UPLOADS") == "0" else 1,
     }
 
@@ -78,7 +91,7 @@ def folder() -> Path:
 def backups() -> list[Path]:
     if not folder().exists():
         return []
-    found = [*folder().glob(f"{PREFIX}*{SUFFIX}"), *folder().glob(f"{OLD_PREFIX}*{SUFFIX}")]
+    found = [p for prefix in (PREFIX, OLD_PREFIX) for suffix in (SUFFIX, ENC_SUFFIX) for p in folder().glob(f"{prefix}*{suffix}")]
     return sorted(found, key=lambda p: p.name.split("-", 1)[1], reverse=True)
 
 
@@ -94,7 +107,8 @@ def make_backup(locks: dict[str, Any] | None = None, uploads: bool | None = None
     (never nested, so a backup can't deadlock with a request); company files are replaced whole
     by a rename and the SQLite database is copied with its own backup API, so neither needs a
     lock; uploads never change once written. `uploads` overrides BACKUP_UPLOADS; `into` writes
-    it to another folder, outside the rotation (the off-site copy with uploads)."""
+    it to another folder, outside the rotation and not encrypted with the server key (the off-site
+    copy with uploads, which offsite.py encrypts with age)."""
     locks = locks or {}
     with_uploads = bool(settings()["uploads"]) if uploads is None else uploads
     data_dir = Path(storage.DATA_DIR)
@@ -121,8 +135,9 @@ def make_backup(locks: dict[str, Any] | None = None, uploads: bool | None = None
         target = into or folder()
         target.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-        final = target / f"{PREFIX}{stamp}{SUFFIX}"
-        tmp = target / f".{final.name}.tmp"
+        encrypt = into is None
+        final = target / f"{PREFIX}{stamp}{ENC_SUFFIX if encrypt else SUFFIX}"
+        tmp = target / f".{PREFIX}{stamp}{SUFFIX}.tmp"
         with tarfile.open(tmp, "w:gz") as tar:
             for rel, data in members:
                 info = tarfile.TarInfo(rel)
@@ -140,21 +155,58 @@ def make_backup(locks: dict[str, Any] | None = None, uploads: bool | None = None
                 info = tarfile.TarInfo(UPLOADS_LEFT_OUT)
                 info.size, info.mtime = len(note), int(time.time())
                 tar.addfile(info, io.BytesIO(note))
-        os.replace(tmp, final)
+        if encrypt:
+            sealed = target / f".{final.name}.tmp"
+            try:
+                vault.encrypt_file(tmp, sealed)
+            finally:
+                tmp.unlink(missing_ok=True)
+            os.replace(sealed, final)
+        else:
+            os.replace(tmp, final)
         if into is None:
             rotate()
         return final
 
 
+def _plain(path: Path, into: Path) -> tuple[Path, bool]:
+    """The backup as a plain .tar.gz: an encrypted one is decrypted into the folder `into`
+    (the caller removes it; the bool says so), an old plain one is used as it is."""
+    path = Path(path)
+    if not vault.is_encrypted_file(path):
+        return path, False
+    into.mkdir(parents=True, exist_ok=True)
+    name = path.name[:-len(".enc")] if path.name.endswith(".enc") else path.name + SUFFIX
+    out = into / name
+    vault.decrypt_file(path, out)
+    return out, True
+
+
 UPLOADS_LEFT_OUT = "uploads-left-out.txt"
+
+
+@contextmanager
+def open_archive(path: str | Path):
+    """A backup opened for reading as a tarfile, encrypted or not (for tests and checks)."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        plain, _ = _plain(Path(path), Path(tmp))
+        with tarfile.open(plain, "r:gz") as tar:
+            yield tar
 
 
 def offsite_copy(made: Path, locks: dict[str, Any] | None = None) -> str:
     """Upload a backup off-site. A local backup without the uploads (BACKUP_UPLOADS=0) goes
     with them: a second archive is made for the upload and removed after (R6-06)."""
-    if settings()["uploads"] or not (Path(storage.DATA_DIR) / "uploads").exists():
-        return offsite.upload(made)
     staging = folder() / "offsite-staging"
+    if settings()["uploads"] or not (Path(storage.DATA_DIR) / "uploads").exists():
+        # Off-site copies are encrypted with age instead, so a laptop with the age key alone reads them.
+        plain, made_here = _plain(made, staging)
+        try:
+            return offsite.upload(plain)
+        finally:
+            if made_here:
+                plain.unlink(missing_ok=True)
     full = make_backup(locks, uploads=True, into=staging)
     try:
         return offsite.upload(full)
@@ -162,13 +214,63 @@ def offsite_copy(made: Path, locks: dict[str, Any] | None = None) -> str:
         full.unlink(missing_ok=True)
 
 
-def rotate() -> list[Path]:
-    keep = settings()["keep"]
+def _stamp_time(name: str) -> float | None:
+    """The time in a backup's or a restore's name (duracash-20261127T101500123456Z..., pre-restore-20261127T101500Z)."""
+    import re
+    m = re.search(r"(\d{8}T\d{6})(\d*)Z", name)
+    if not m:
+        return None
+    try:
+        return datetime.strptime(m.group(1), "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc).timestamp()
+    except ValueError:
+        return None
+
+
+def _age_days(path: Path, now: float) -> float:
+    try:
+        st = path.stat()
+        # A copy of a bad file keeps the original's time (copy2); its ctime is when it was copied.
+        made = _stamp_time(path.name) or max(st.st_mtime, st.st_ctime)
+    except OSError:
+        return 0.0
+    return (now - made) / 86400
+
+
+def rotate(now: float | None = None) -> list[Path]:
+    """Remove the backups beyond the newest BACKUP_KEEP, and any BACKUP_KEEP_DAYS old or more (M5)."""
+    cfg, now = settings(), time.time() if now is None else now
     removed = []
-    for old in backups()[keep:]:
+    for i, old in enumerate(backups()):
+        if i >= cfg["keep"] or _age_days(old, now) >= cfg["keep_days"]:
+            try:
+                old.unlink()
+                removed.append(old)
+            except OSError:
+                pass
+    return removed
+
+
+def purge(now: float | None = None) -> list[Path]:
+    """The retention sweep (M5), hourly from the scheduler: old backups (rotate), what restores
+    moved aside (pre-restore-<time>/) and copies of files that couldn't be read (*.bad-*) once
+    they are BACKUP_KEEP_DAYS old, and leftovers of an interrupted restore or upload after a day.
+    So a deleted company's data is gone from this disk within BACKUP_KEEP_DAYS."""
+    cfg, now = settings(), time.time() if now is None else now
+    data_dir = Path(storage.DATA_DIR)
+    removed = rotate(now)
+    candidates = [(p, cfg["keep_days"]) for p in data_dir.glob("pre-restore-*") if p.is_dir()]
+    candidates += [(p, cfg["keep_days"]) for p in [*data_dir.glob("*.bad-*"), *(data_dir / "companies").rglob("*.bad-*")] if p.is_file()]
+    candidates += [(p, 1) for p in data_dir.glob(".restore-staging-*")]
+    candidates += [(p, 1) for p in (folder() / "offsite-staging").glob("*")] if (folder() / "offsite-staging").is_dir() else []
+    for path, days in candidates:
+        if _age_days(path, now) < days:
+            continue
         try:
-            old.unlink()
-            removed.append(old)
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+            removed.append(path)
         except OSError:
             pass
     return removed
@@ -196,8 +298,10 @@ def restore(path: str | Path) -> Path:
     path = Path(path)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     staging = data_dir / f".restore-staging-{stamp}"
+    archive_dir = data_dir / f".restore-staging-{stamp}-archive"  # an encrypted backup, decrypted
     try:
-        with tarfile.open(path, "r:gz") as tar:
+        plain, _ = _plain(path, archive_dir)
+        with tarfile.open(plain, "r:gz") as tar:
             members = _safe_members(tar)
             names = {m.name for m in members}
             if "auth.json" not in names or not any(n.startswith("companies/") for n in names):
@@ -213,6 +317,8 @@ def restore(path: str | Path) -> Path:
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
         raise
+    finally:
+        shutil.rmtree(archive_dir, ignore_errors=True)
     aside = data_dir / f"pre-restore-{stamp}"
     aside.mkdir(parents=True)
     # Everything a backup holds is moved aside, even what this (perhaps older) backup lacks:
@@ -232,17 +338,22 @@ def restore(path: str | Path) -> Path:
 
 
 def start_scheduler(locks: dict[str, Any], log: Callable[[str], None] = print) -> threading.Thread | None:
-    """Back up now if the newest backup is too old, then every BACKUP_HOURS. Daemon thread."""
+    """Back up now if the newest backup is too old, then every BACKUP_HOURS; and every hour,
+    even with BACKUP_HOURS=0, the retention sweep (purge). Daemon thread."""
     hours = settings()["hours"]
-    if not hours:
-        return None
 
     def due() -> bool:
         found = backups()
-        return not found or time.time() - found[0].stat().st_mtime >= hours * 3600
+        return bool(hours) and (not found or time.time() - found[0].stat().st_mtime >= hours * 3600)
 
     def loop() -> None:
         while True:
+            try:
+                for gone in purge():
+                    log(f"retention: removed {gone.name}")
+            except Exception as exc:
+                log(f"retention sweep failed: {exc.__class__.__name__}: {exc}")
+                alerts.notify(f"retention:{exc.__class__.__name__}", f"the backup retention sweep failed ({exc.__class__.__name__}); see the server log")
             try:
                 if due():
                     made = make_backup(locks)
@@ -252,7 +363,7 @@ def start_scheduler(locks: dict[str, Any], log: Callable[[str], None] = print) -
             except Exception as exc:  # a failed backup must never stop the backups that follow
                 log(f"backup failed: {exc.__class__.__name__}: {exc}")
                 alerts.notify(f"backup:{exc.__class__.__name__}", f"backup failed ({exc.__class__.__name__}); see the server log")
-            time.sleep(min(3600, hours * 3600))
+            time.sleep(min(3600, hours * 3600) if hours else 3600)
 
     thread = threading.Thread(target=loop, name="backups", daemon=True)
     thread.start()
@@ -272,8 +383,9 @@ def drill(path: str | Path) -> tuple[list[str], list[str]]:
     report: list[str] = []
     problems: list[str] = []
     with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        with tarfile.open(path, "r:gz") as tar:
+        root = Path(tmp) / "data"
+        plain, _ = _plain(Path(path), Path(tmp) / "archive")
+        with tarfile.open(plain, "r:gz") as tar:
             for m in _safe_members(tar):
                 target = root / m.name
                 target.parent.mkdir(parents=True, exist_ok=True)
