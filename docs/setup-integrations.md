@@ -1,4 +1,4 @@
-# Setting up email, texts and QuickBooks
+# Setting up email, texts, QuickBooks and DocuSign
 
 For whoever holds the accounts. Everything below goes in the Render dashboard, under the service's Environment page. Names only here; values never go in the repository. `render.yaml` lists the staging names with `sync: false`.
 
@@ -195,6 +195,70 @@ The daily payment sync runs from the same hourly loop as the daily email, about 
 The one code change then: a 403 tells the owner to check `QBO_ENV` (now `QBO_ENVIRONMENT`) against the keys, since mixing sandbox and live is the likely first mistake.
 
 The sample QuickBooks import on a job runs only on the demo company. The server refuses it for any other, and a test covers it.
+
+## DocuSign eSignature
+
+With DocuSign connected, the Sign step offers **Sign with DocuSign** beside the typed name, on a pay app's approval, a pending change order and a state's waiver form. Duracash makes its own PDF with invisible anchor words where the signature and date go, creates an envelope in the company's own DocuSign account with the signed-in person as an embedded signer, and sends them to DocuSign's signing page and back. When DocuSign says the envelope is completed, the signed PDF and the certificate of completion go on the job's records, and the document counts as signed: the pay app's approval (so Approve & send lets it go), a lien waiver of its type on file, or, when the client signed too, the change order approved. Without the settings, or with no account connected, nothing changes: the typed name works as before.
+
+**Settings**
+
+| Name | Where | What it is |
+|---|---|---|
+| `DOCUSIGN_CLIENT_ID` | staging, production | The integration key, from Apps and Keys in the DocuSign account that owns the app. |
+| `DOCUSIGN_CLIENT_SECRET` | staging, production | A secret key of that integration key. Shown once when it is made. Production needs its own (go-live doesn't copy secrets). |
+| `DOCUSIGN_ENV` | staging: `demo`; production: `production` after go-live | `demo` (the default) signs in at `account-d.docusign.com`; `production` at `account.docusign.com`. |
+| `DOCUSIGN_CONNECT_KEY` | staging, production | The Connect HMAC secret. Two, comma separated, only while one replaces the other. Without it Duracash asks for no webhook and trusts none: a signature is filed when the signer comes back, or with Check DocuSign on Settings. |
+| `DURACASH_URL` | staging, production | Required, `https://`: it makes the redirect URI and the webhook's address. |
+
+**To set up at DocuSign (Stephen)**
+
+1. Make a free developer account at developers.docusign.com. It is a demo account: nothing signed there is legally binding.
+2. Apps and Keys, Add App and Integration Key. Authentication: Authorization Code Grant, with a client secret (Duracash keeps it on the server). Add a secret key and copy it.
+3. Redirect URIs, exactly: `https://<staging site>/api/docusign/callback`, and later the live site's. No fragment (`#`).
+4. Connect HMAC, in the same account (the one that holds the integration key): Admin, Integrations, Connect, Connect Keys, Add Secret Key. Copy the whole key: later only its first four characters show. No Connect configuration is needed: Duracash asks for the webhook on each envelope (envelope-level `eventNotification` with `includeHMAC` and `integratorManaged`), so DocuSign signs those messages with this account's keys and the contractors' own accounts need no Connect set-up. The webhook goes to `https://<site>/api/docusign/webhook`.
+5. In Render, set the four `DOCUSIGN_*` names above on staging (`DOCUSIGN_ENV=demo`).
+6. A contractor's own account must allow embedded signing: DocuSign refuses an embedded signer when the account requires signers to have, or log in to, a DocuSign account.
+
+**Go-live (before any real contractor uses it)**
+
+- The integration key starts in the demo environment. Moving it to production is DocuSign's go-live review, started from the developer console. It asks for a one-time identity verification, a paid production DocuSign account to manage the integration (admin or developer access), OAuth 2.0 and the API rules met, and the right integration type. Manual reviews take about 24 to 48 hours.
+- **Integration type is the decision for Stephen.** Each Duracash company connects its *own* DocuSign account, which DocuSign calls a public integration, and a public integration needs the DocuSign Partner Program. The other kind, where contractors don't need DocuSign at all and envelopes go through Duracash's account, is an embedded integration and needs ISV Embed partner licensing. Duracash is built as the first. Ask DocuSign which applies before submitting.
+- After go-live the key is copied to production, but its secrets and redirect URIs are not: make a production secret, add the live redirect URI, make a Connect key on the production account that holds the key, then set `DOCUSIGN_CLIENT_SECRET`, `DOCUSIGN_CONNECT_KEY` and `DOCUSIGN_ENV=production` on production. Each contractor's API address differs by data centre; Duracash reads it from `/oauth/userinfo` when they connect.
+- The API rules are part of the review: no more than one status read per envelope per 15 minutes. Duracash reads an envelope only when the signer comes back from signing, on Check DocuSign, and when a webhook message has no recipients in it, never more often than that.
+
+**Live test (staging, demo keys)**
+
+1. Sign in as an owner. On Settings, Company, press Connect DocuSign, sign in to the demo account and allow. You should come back connected, with the account's name.
+2. On a pay app ready to send, as an approver, press Sign with DocuSign. Check the Sign Here and Date tabs sit on the contractor's signature line (the offsets in `docusign.tabs` may need a few pixels). Sign. You come back to the pay app, signed; Approve & send lets it go.
+3. On the job's records: the signed PDF and the certificate of completion.
+4. With "Ask clients to sign change orders in DocuSign too" on, sign a pending change order. A test address as the client's email gets DocuSign's email; sign there. The webhook should mark the change order approved within a minute. Turn the switch off and sign another: it stays pending, with the signed copy kept.
+5. With `DURACASH_WAIVER_FORMS=GA` and a Georgia job, sign a waiver form. Check where the signature lands and that it is on the records as a lien waiver of its type.
+6. Press Sign with DocuSign and then Finish Later in DocuSign: nothing is marked signed; Check DocuSign on Settings says it is still waiting.
+7. Edit a pay app while its envelope is out, then sign: the signed copy is kept, the approval isn't, and the audit trail says why.
+8. Wait over eight hours and sign again, which proves the token refresh.
+9. In DocuSign's Connect logs (Admin, Connect, Logs), check the messages were delivered with a 200.
+
+**What was checked, Nov 27 2026**
+
+| Item in `docusign.py` | Result | Source |
+|---|---|---|
+| Authorize, token and userinfo addresses; scope `signature`; code exchange and refresh with Basic auth; `accounts[].account_id`, `is_default`, `base_uri`; `/restapi/v2.1/accounts/{id}` | Match | [Authorization Code Grant: get a token](https://developers.docusign.com/platform/auth/authcode/authcode-get-token/) |
+| `extended` scope: each refresh brings a refresh token with a full lifetime; access tokens about 8 hours; refresh tokens about 30 days | Match | Same page |
+| Envelope JSON (`documents[].documentBase64`, `fileExtension`, `documentId`; `recipients.signers[]` with `clientUserId`, `routingOrder`; `status: sent`) and the recipient view (`returnUrl`, `authenticationMethod`, `email`, `userName`, `clientUserId`) | Match | [Embedded signing how-to](https://developers.docusign.com/docs/esign-rest-api/how-to/request-signature-in-app-embedded/) |
+| The signing page's address works once and expires after 5 minutes; the `event` values on the return address; don't rely on the return address alone | Match: it is used at once and never stored, and the return only triggers a status read | [EnvelopeViews: createRecipient](https://developers.docusign.com/docs/esign-rest-api/reference/envelopes/envelopeviews/createrecipient/) |
+| Anchor tabs (`anchorString`, `anchorUnits`, offsets, `anchorIgnoreIfNotPresent`), white anchor text, anchors apply to all documents | Match; `dateSigned` takes the same anchor fields | [Auto-place tabs](https://developers.docusign.com/docs/esign-rest-api/esign101/concepts/tabs/auto-place/), [EnvelopeRecipientTabs reference](https://developers.docusign.com/docs/esign-rest-api/reference/envelopes/enveloperecipienttabs/create/) |
+| Documents `combined` (with `certificate=false`) and `certificate` as PDF | Match | [EnvelopeDocuments: get](https://developers.docusign.com/docs/esign-rest-api/reference/envelopes/envelopedocuments/get/) |
+| HMAC: `X-DocuSign-Signature-1..N`, one per key; base64 of HMAC-SHA256 over the raw body; one match is enough | Match; compared in constant time | [HMAC security](https://developers.docusign.com/platform/webhooks/connect/hmac/), [Validate a message](https://developers.docusign.com/platform/webhooks/connect/validate/), [Set up HMAC](https://developers.docusign.com/platform/webhooks/connect/setting-up-hmac/) |
+| Envelope-level `eventNotification` (`deliveryMode: SIM`, `eventData.version: restv2.1`, `includeHMAC`, `integratorManaged`, `requireAcknowledgment`) | From DocuSign's developer blog, not the API reference | [JSON SIM and HMAC](https://www.docusign.com/blog/developers/event-notifications-using-json-sim-and-hmac), [HMAC for partners](https://www.docusign.com/blog/developers/introducing-hmac-partners-docusign-connect) |
+| Polling limit: one status read per envelope per 15 minutes | Match | [API rules and limits](https://developers.docusign.com/docs/esign-rest-api/esign101/rules-and-limits/) |
+| Go-live: review, identity verification, paid account, integration types, secrets and redirect URIs not copied, production base URIs | As described above | [Go-live](https://developers.docusign.com/platform/go-live/), [eSignature go-live](https://developers.docusign.com/docs/esign-rest-api/go-live/) |
+| The JSON SIM message's shape (`data.envelopeId`, `data.accountId`, `data.envelopeSummary`) | Not checked against a DocuSign page | Live test step 4, and Connect's logs |
+| The tabs' exact positions on our PDFs | Not checked | Live test steps 2 and 5 |
+
+**For the attorney**
+
+- Georgia's statutory waiver form has a witness line. DocuSign records the signer, but nobody witnesses the signature. Whether a DocuSign-signed Georgia waiver needs a witness, and how, is a question for counsel before the button is used for Georgia waivers.
+- DocuSign shows signers its own consent to do business electronically. The typed-name consent wording in Duracash isn't shown in DocuSign; the change order PDF says it is signed through DocuSign.
 
 ## Twilio sources
 

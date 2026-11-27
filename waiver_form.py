@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import re
+from datetime import date
 from typing import Any
 
 import domain
@@ -210,9 +211,10 @@ def _layout(paragraphs: list[str], title: str) -> list[list[tuple]]:
     return [page for page in pages if page]   # the last paragraph's spacing can start a page with nothing on it
 
 
-def render(paragraphs: list[str], title: str, values: dict[str, str]) -> bytes:
+def render(paragraphs: list[str], title: str, values: dict[str, str], anchors: bool = False) -> bytes:
     """The form as a PDF with one text field per blank (an AcroForm), each filled with its value
-    and drawn with it, so it prints filled in and can still be changed before signing."""
+    and drawn with it, so it prints filled in and can still be changed before signing. anchors:
+    the copy signed in DocuSign, with a white anchor word in the signature blank (docusign.py)."""
     pages = _layout(paragraphs, title)
     objects: list[bytes] = []
 
@@ -236,6 +238,8 @@ def render(paragraphs: list[str], title: str, values: dict[str, str]) -> bytes:
             _, name, x, y, w, h, multi = step
             value = str(values.get(name, "") or "")
             ops.append(b"0.4 w %.2f %.2f m %.2f %.2f l S" % (x, y, x + w, y))   # the blank's line, as printed
+            if anchors and name == "signature":
+                ops.append(b"q 1 1 1 rg BT /F1 %d Tf %.2f %.2f Td (/ds_sign1/) Tj ET Q" % (SIZE, x + 4, y + 3))
             look = _appearance(value, w, h, multi)
             ap = add(b"<< /Type /XObject /Subtype /Form /BBox [0 0 %.2f %.2f] /Resources << /Font << /Helv %d 0 R >> >> /Length %d >>\nstream\n"
                      % (w, h, helv, len(look)) + look + b"\nendstream")
@@ -299,8 +303,11 @@ def _appearance(value: str, w: float, h: float, multi: bool) -> bytes:
     return b" ".join(ops)
 
 
-def for_waiver(state: dict[str, Any], job_id: str, for_id: str = "", which: str = "interim") -> tuple[bytes | None, str, str]:
-    """(PDF, file name, refusal) for a job's waiver in its state's form. Refused: no form for the
+def for_waiver(state: dict[str, Any], job_id: str, for_id: str = "", which: str = "interim",
+               for_docusign: bool = False) -> tuple[bytes | None, str, str]:
+    """(PDF, file name, refusal) for a job's waiver in its state's form. for_docusign: the copy
+    signed in DocuSign now, so its day, month and year are today's and the signature blank has
+    its anchor. Refused: no form for the
     job's state (or not switched on), or a final waiver while money on the job is still to come
     (decision 6), unless for_id is the retainage request (domain.RETAINAGE_REQUEST) and that
     request is for the last money (domain.retainage_final_holds)."""
@@ -329,5 +336,8 @@ def for_waiver(state: dict[str, Any], job_id: str, for_id: str = "", which: str 
             return None, "", f"A final waiver waits until all the money on {job['name']} is in: {', '.join(left)}."
     form = forms[which]
     values = prefill(state, job, for_id, which)
+    if for_docusign:
+        today = date.today()
+        values.update(day=str(today.day), month=today.strftime("%B"), year=str(today.year))
     name = re.sub(r"[^A-Za-z0-9._-]", "-", f"{job.get('code') or job['id']}-{st}-{which}-waiver") + ".pdf"
-    return render(form["paragraphs"], form["title"], values), name, ""
+    return render(form["paragraphs"], form["title"], values, anchors=for_docusign), name, ""

@@ -60,6 +60,7 @@ import vault
 # deleted company's live tokens for as long as it is kept. After a restore, owners connect again.
 TOP_FILES = (("auth.json", "auth"), ("inbound_tokens.json", "tokens"), ("helper_answers.json", None), ("helper_log.json", None),
              ("mail_sends.json", None), ("deleted_companies.json", "deleted"),
+             ("docusign_connections.json", "docusign"), ("docusign_envelopes.json", "docusign"),
              ("monthly_jobs.json", None), ("daily_jobs.json", None))
 TOP_NAMES = tuple(name for name, _ in TOP_FILES)
 # In backups made before that: read past, never put back.

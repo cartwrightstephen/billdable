@@ -58,6 +58,8 @@ export const ACTION_WORDS = {
   billing: "Billing changed", company_update: "Company changed", team: "Team changed", team_join: "Joined the team",
   qbo_connected: "QuickBooks connected", qbo_disconnected: "QuickBooks disconnected",
   qbo_pushed: "Sent to QuickBooks", qbo_synced: "QuickBooks sync", qbo_settings: "QuickBooks items chosen", qbo_linked: "Client linked to QuickBooks", read_only: "Read-only changed",
+  docusign_connected: "DocuSign connected", docusign_disconnected: "DocuSign disconnected", docusign_settings: "DocuSign settings changed",
+  docusign_sent: "Opened for signing in DocuSign", docusign_completed: "Signed in DocuSign", docusign_ended: "Declined or voided in DocuSign",
   unconditional_override: "Sent with an unconditional waiver", unconditional_mention_confirmed: "Confirmed a file that mentions an unconditional waiver", waiver_answer: "Said which waiver it is", waiver_answer_changed: "Changed which waiver it is", waiver_type: "Waiver type set", waiver_not_needed: "No waiver through Duracash",
   daily_quantities_not_applied: "Quantities not added", quantities_imported: "Quantities imported",
   payapp_attachments: "Email attachments changed", record_work: "Ticket tied to work", record_filed: "Job record filed",

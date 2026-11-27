@@ -40,6 +40,8 @@ import billing
 import calendar_feed
 import contract_import
 import doc_check
+import docusign
+import docusign_http
 import domain
 import exports
 import helper
@@ -3687,6 +3689,10 @@ class Handler(BaseHTTPRequestHandler):
 
 
 
+# DocuSign's handlers (docusign_http.py) join the request handler.
+docusign_http.install(Handler, sys.modules[__name__])
+
+
 class UnknownAction(Exception):
     """A job action the route table doesn't know: answered with 404."""
 
@@ -3744,6 +3750,17 @@ ROUTES = [
     Route("POST", r"/api/contract/read", "_p_contract_read", "user"),
 
     # == stream: payapps-cos ==
+
+    # == stream: docusign == (docusign_http.py)
+    Route("GET", r"/api/docusign/status", "_g_docusign_status", "user"),
+    Route("GET", r"/api/docusign/callback", "_g_docusign_callback"),
+    Route("GET", r"/api/docusign/return", "_g_docusign_return"),
+    Route("POST", r"/api/docusign/connect", "_p_docusign_connect", "body", perm="company"),
+    Route("POST", r"/api/docusign/disconnect", "_p_docusign_disconnect", "body", perm="company"),
+    Route("POST", r"/api/docusign/settings", "_p_docusign_settings", "body", perm="company"),
+    Route("POST", r"/api/docusign/sign", "_p_docusign_sign", "body"),
+    Route("POST", r"/api/docusign/check", "_p_docusign_check", "body"),
+    Route("POST", r"/api/docusign/webhook", "_p_docusign_webhook"),
 
     # == stream: paperwork-waivers-retainage ==
     Route("GET", r"/api/waiver-forms", "_g_waiver_forms", "user"),
@@ -4368,7 +4385,7 @@ def backup_before_upgrade(log=None) -> Path | None:
     return made
 
 
-BACKUP_LOCKS = {"auth": auth.LOCK, "tokens": importer.TOKENS_LOCK, "deleted": _DELETED_LOCK, "qbo": qbo.LOCK}
+BACKUP_LOCKS = {"auth": auth.LOCK, "tokens": importer.TOKENS_LOCK, "deleted": _DELETED_LOCK, "qbo": qbo.LOCK, "docusign": docusign.LOCK}
 DRAIN_SECONDS = 20   # Render waits 30 seconds after SIGTERM before it stops the container
 
 
