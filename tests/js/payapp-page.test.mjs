@@ -167,17 +167,27 @@ test("Approve & send asks first, naming who, how much and the period", async () 
   assert.match(sent.today, /^\d{4}-\d{2}-\d{2}$/, "the sender's own day, which the payment terms count from");
 });
 
-test("with something missing, Approve & send still asks first, then the server says why in place", async () => {
-  // Round 1 hunt: the page may have been drawn before a fix made in another tab, so every send it
-  // makes asks first; what can't go, the server refuses.
+test("with something missing, Approve & send asks the server's checks first and doesn't ask Email PA-x?", async () => {
+  // Nov 27 hunt: the server's checks (check_only, nothing sent) come first on a page that shows
+  // something in the way; the confirm is asked only once it can go. What can't go is said in place.
   const j = job();
   show(j);
   dom.requests.length = 0;
   dom.answers = [(p) => (p === "/api/jobs/j1/send" ? { status: 409, body: { error: "Pay app blocked.", blockers: ["Conditional waiver is missing."] } } : undefined)];
-  const d = answerDialogs(true);
+  let d = answerDialogs(true);
+  try { await reg.actions.send({ dataset: { reviewed: "abc123", blocked: "1" } }, "j1"); } finally { d.restore(); }
+  assert.equal(d.said.length, 0, "no confirm for a pay app that can't go");
+  let sends = dom.requests.filter(r => r.path === "/api/jobs/j1/send");
+  assert.equal(sends.length, 1);
+  assert.equal(sends[0].body.check_only, true, "only the check went");
+  // Fixed in another tab: the check passes, then the confirm, then the send itself.
+  dom.requests.length = 0;
+  dom.answers = [(p, body) => (p === "/api/jobs/j1/send" ? { status: 200, body: {} } : undefined)];
+  d = answerDialogs(true);
   try { await reg.actions.send({ dataset: { reviewed: "abc123", blocked: "1" } }, "j1"); } finally { d.restore(); }
   assert.equal(d.said.length, 1, "the confirm names who, how much and the period");
-  assert.equal(dom.requests.filter(r => r.path === "/api/jobs/j1/send").length, 1);
+  sends = dom.requests.filter(r => r.path === "/api/jobs/j1/send");
+  assert.deepEqual(sends.map(r => !!r.body.check_only), [true, false]);
 });
 
 test("a pay app marked sent whose email didn't go out says so under the pill", () => {
