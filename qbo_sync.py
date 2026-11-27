@@ -297,9 +297,14 @@ def invoice_lines(invoice: dict[str, Any], job: dict[str, Any], billing_id: str,
         cents = int(line["amount_cents"])
         if not cents:
             continue
-        held = cents < 0 and str(line.get("label", "")).startswith("Less retainage")
+        # Retainage held is one negative line on the Retainage item, whatever percents the lines
+        # hold (payapp_core's "Less retainage (10% and 5% by line)"); a retainage release bills it
+        # back as a positive line on the same item, as qbo._item does for the CSV.
+        released = bool(line.get("retainage_release"))
+        held = released or (cents < 0 and str(line.get("label", "")).startswith("Less retainage"))
         if held and not retainage_id:
-            raise domain.GateError(f"{invoice['number']} holds back retainage. Choose the QuickBooks retainage item on the QuickBooks card first.")
+            raise domain.GateError(f"{invoice['number']} {'bills retainage held' if released else 'holds back retainage'}. "
+                                   "Choose the QuickBooks retainage item on the QuickBooks card first.")
         item = retainage_id if held else billing_id
         out.append({"DetailType": "SalesItemLineDetail", "Amount": _dollars(cents),
                     "Description": " ".join(f"{job['name']}: {line.get('label', '')}".split())[:4000],
@@ -376,6 +381,8 @@ def push(company_id: str, state: dict[str, Any], job_id: str, invoice_id: str, o
         raise domain.GateError(f"{invoice['number']} was deleted or pulled back, so there is nothing to put in QuickBooks.")
     if invoice.get("status") not in PUSHABLE:
         raise domain.GateError(f"{invoice['number']} hasn't gone to the client, so it isn't ready for QuickBooks. Send it first.")
+    if not domain.qbo_pushable(invoice):   # an earlier pay app entered from before Duracash (domain/payapp_core.py)
+        raise domain.GateError(f"{invoice['number']} was billed before Duracash, so it is in your books already. Only pay apps made here go to QuickBooks.")
     invoice_body(state, job, invoice, "check")   # settings and lines, before anything is sent
     request_id = uuid.uuid4().hex[:40]
     customer_id, customer_name, how = _customer(company_id, payer, request_id)
@@ -436,7 +443,7 @@ def apply_push(state: dict[str, Any], result: dict[str, Any], actor: str) -> dic
 def pushed(state: dict[str, Any]) -> dict[str, tuple[dict, dict]]:
     """QuickBooks invoice id -> (job, pay app) for every pay app sent to QuickBooks."""
     return {inv["qbo"]["invoice_id"]: (job, inv) for job in state.get("jobs", []) for inv in job.get("invoices", [])
-            if (inv.get("qbo") or {}).get("invoice_id")}
+            if (inv.get("qbo") or {}).get("invoice_id") and not inv.get("imported")}
 
 
 def open_pushed(state: dict[str, Any]) -> list[dict]:
@@ -473,6 +480,8 @@ def apply_payments(state: dict[str, Any], payments: list[dict[str, Any]], actor:
             job, inv = ours[txn]
             if any(x.get("qbo_payment_id") == pid and x.get("invoice_id") == inv["id"] for x in job.get("payments", [])):
                 continue   # already here
+            if inv.get("imported"):
+                continue   # billed and paid before Duracash: what was paid on it is entered with it (imported payments)
             if cents <= 0 or inv.get("status") not in domain.OPEN_FOR_PAYMENT or job.get("closed"):
                 continue
             ref = str(p.get("PaymentRefNum") or f"QBO {pid}")

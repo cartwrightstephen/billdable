@@ -597,3 +597,62 @@ class QboSyncHttpTests(FakeCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PayappCoreTests(FakeCase):
+    """Integration (Nov 27): QuickBooks with nov27-payapp-core's earlier pay apps, retainage by line
+    and the retainage-only release pay app."""
+
+    def schedule(self):
+        import test_payapp_core as core
+        state, job, labor, materials = core.schedule_job(retainage=10)
+        self.map_items(state)
+        return core, state, job, labor, materials
+
+    def test_an_earlier_pay_app_is_never_pushed_and_takes_no_payments_from_quickbooks(self):
+        core, state, job, labor, materials = self.schedule()
+        domain.import_earlier_payapps(state, job["id"], {"payapps": [{"number": "1", "period_to": core.DAY, "lines": {labor: {"pct": "20"}}, "paid": "0"}]})
+        [earlier] = domain.imported_invoices(job)
+        self.assertEqual(earlier["status"], "sent")
+        with self.assertRaises(domain.GateError) as caught:
+            qbo_sync.push(self.cid, state, job["id"], earlier["id"])
+        self.assertIn("billed before Duracash", str(caught.exception))
+        self.assertEqual([m for m, *_ in BOOKS.log if m == "POST"], [], "nothing written to QuickBooks")
+        # Linked somehow anyway (an old copy of the data): payments in QuickBooks don't touch it.
+        BOOKS.invoices["77"] = {"Id": "77", "DocNumber": earlier["number"], "TotalAmt": earlier["amount_cents"] / 100,
+                                "Balance": earlier["amount_cents"] / 100, "SyncToken": "0", "CustomerRef": {"value": "58"}}
+        earlier["qbo"] = {"invoice_id": "77", "sync_token": "0", "doc_number": earlier["number"], "total_cents": earlier["amount_cents"]}
+        self.assertNotIn("77", qbo_sync.pushed(state))
+        pay_in_qbo("77", earlier["amount_cents"] / 100, ref="OLD-1")
+        report = qbo_sync.apply_payments(state, qbo_sync.fetch_payments(self.cid, state), "Pat")
+        self.assertEqual(report["recorded"], [])
+        self.assertEqual((earlier["status"], [p for p in job["payments"] if p.get("qbo_payment_id")]), ("sent", []))
+
+    def test_retainage_by_line_is_still_one_negative_retainage_line(self):
+        core, state, job, labor, materials = self.schedule()
+        domain.set_line_retainage(state, job["id"], {materials: "5"})
+        domain.record_sov_progress(state, job["id"], {labor: "0.5", materials: "40"})
+        inv = core.send(state, job)
+        self.assertEqual(inv["lines"][-1]["label"], "Less retainage (10% and 5% by line)")
+        self.push(state, job, inv)
+        sent = BOOKS.invoices[inv["qbo"]["invoice_id"]]
+        held = [l for l in sent["Line"] if l["SalesItemLineDetail"]["ItemRef"]["value"] == "2"]
+        self.assertEqual([round(l["Amount"] * 100) for l in held], [-inv["retainage_cents"]])
+        self.assertEqual(round(sent["TotalAmt"] * 100), inv["amount_cents"])
+
+    def test_a_retainage_release_is_a_positive_line_on_the_retainage_item(self):
+        core, state, job, labor, materials = self.schedule()
+        domain.record_sov_progress(state, job["id"], {labor: "1", materials: "50"})
+        first = core.send(state, job)
+        domain.match_payment(state, job["id"], first["amount_cents"], "CHK-1")
+        domain.draft_retainage_release(state, job["id"], 50_000, "substantial")
+        rel = core.send(state, job)
+        self.assertTrue(rel.get("retainage_release"))
+        self.push(state, job, rel)
+        sent = BOOKS.invoices[rel["qbo"]["invoice_id"]]
+        self.assertEqual([(l["SalesItemLineDetail"]["ItemRef"]["value"], round(l["Amount"] * 100)) for l in sent["Line"]], [("2", 50_000)])
+        # Without a retainage item chosen it says so instead of putting it on the billing item.
+        qbo_sync.save_mapping(state, {"id": "1", "name": "Construction billing"}, None, "Pat")
+        with self.assertRaises(domain.GateError) as caught:
+            qbo_sync.invoice_lines(rel, job, "1", None)
+        self.assertIn("bills retainage held", str(caught.exception))
