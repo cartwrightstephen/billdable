@@ -170,15 +170,17 @@ def sensitive_file_ids(state: dict[str, Any]) -> set[str]:
 
 
 def hide_sensitive_text(payload: Any, state: dict[str, Any]) -> Any:
-    """`payload` (a page's data) without the text of a payroll, time sheet, waiver or contract
-    record or Inbox item: an uploaded .txt or .csv puts its contents there (a record's note, an
-    item's text), which is as private as the file (H2). For those without "sensitive_docs".
+    """`payload` (a page's data) as someone without "sensitive_docs" may see it (H2):
+    - without the text of a payroll, time sheet, waiver or contract record or Inbox item: an
+      uploaded .txt or .csv puts its contents there (a record's note, an item's text);
+    - with the client pages' addresses (/p/...) cut from the emails' copies (the Outbox): a
+      client's page serves the files sent with the pay app, signed waivers and certified payroll
+      among them, to whoever holds the address.
     Returns a copy where something is hidden; what it shares with `payload` is left as it was."""
+    import domain
     records = {str(r.get("id")) for job in state.get("jobs", []) for r in job.get("records", []) if _sensitive_record(r)}
     items = {str(i.get("id")) for i in state.get("inbox", [])
              if i.get("kind") in SENSITIVE_KINDS or i.get("filed_kind") in SENSITIVE_KINDS}
-    if not records and not items:
-        return payload
 
     def walk(value: Any) -> Any:
         if isinstance(value, list):
@@ -186,6 +188,8 @@ def hide_sensitive_text(payload: Any, state: dict[str, Any]) -> Any:
         if not isinstance(value, dict):
             return value
         out = {k: walk(v) for k, v in value.items()}
+        if isinstance(out.get("body"), str) and "/p/" in out["body"]:
+            out["body"] = domain.CLIENT_PAGE_IN_TEXT.sub("/p/[link]", out["body"])
         rid = str(value.get("id") or "")
         if rid in records and out.get("note"):
             out["note"], out["hidden"] = "", True

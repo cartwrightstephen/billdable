@@ -397,6 +397,36 @@ class RouteWalkTests(ServerCase):
                 self.ids = saved
             self.assertEqual(digest(), before, "nothing in the read-only demo changed")
 
+    def test_a_client_page_that_carries_a_waiver_isnt_a_way_round_the_permission(self):
+        """The client's page (/p/) serves the files sent with the pay app, signed waivers and
+        certified payroll among them; someone who may not open those can't reach it either."""
+        import re
+        from datetime import datetime, timezone
+        import payer_page
+        with server.company_lock(self.a):
+            state = server.load_company(self.a)
+            for job in state["jobs"]:
+                for inv in job["invoices"]:
+                    if inv.get("payer_token"):
+                        inv["payer_link_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            server.save_company(self.a, state)
+        sensitive = profiles.sensitive_file_ids(state)
+        carrying = [(j, i) for j in state["jobs"] for i in j["invoices"]
+                    if i.get("payer_token") and set(payer_page.file_ids(state, j, i)) & sensitive]
+        self.assertTrue(carrying, "the demo's pay apps carry signed waivers")
+        job, inv = carrying[0]
+        for path in ("/api/outbox?limit=200", "/api/state"):
+            res, out = self.request("GET", path, cookie=self.a_member)
+            self.assertEqual(res.status, 200)
+            self.assertEqual(re.findall(r"/p/co-[0-9a-f]+\.[A-Za-z0-9_-]{20,}", json.dumps(out)), [], path)
+        res, out = self.request("GET", f"/api/jobs/{job['id']}/payapp/{inv['id']}/page", cookie=self.a_member)
+        self.assertEqual(res.status, 403, out)
+        # The owner still opens it, and still reads the emails as they went.
+        res, _ = self.request("GET", f"/api/jobs/{job['id']}/payapp/{inv['id']}/page", cookie=self.a_owner)
+        self.assertEqual(res.status, 303)
+        res, out = self.request("GET", "/api/outbox?limit=200", cookie=self.a_owner)
+        self.assertTrue(re.findall(r"/p/co-[0-9a-f]+\.[A-Za-z0-9_-]{20,}", json.dumps(out)))
+
     def test_without_the_permission_downloads_of_sensitive_files_are_403(self):
         for path in (f"/api/files/{self.ids['file']}", f"/api/compliance/docs/{self.ids['doc']}/file",
                      f"/api/jobs/{self.ids['job']}/archive/job-file.zip"):

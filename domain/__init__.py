@@ -2818,6 +2818,7 @@ def hide_link_secrets(job: dict[str, Any]) -> dict[str, Any]:
 
 
 LINK_IN_TEXT = re.compile(r"/([ps])/[a-z0-9-]+\.[A-Za-z0-9_-]{20,64}")
+CLIENT_PAGE_IN_TEXT = re.compile(r"/p/[a-z0-9-]+\.[A-Za-z0-9_-]{20,64}")
 
 
 def without_link_secrets(state: dict[str, Any]) -> dict[str, Any]:

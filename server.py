@@ -1468,6 +1468,11 @@ class Handler(BaseHTTPRequestHandler):
         if not item or not item.get(secret):
             self._json(404, {"error": "There is no page for that yet. It is made when the email goes out."})
             return
+        if prefix == "p" and not has_perm(user, "sensitive_docs", state) \
+                and set(payer_page.file_ids(state, job, item)) & profiles.sensitive_file_ids(state):
+            # The client's page serves the files sent with it, a signed waiver or payroll among them (H2).
+            self._json(403, {"error": SENSITIVE_WORDS})
+            return
         self._send(303, b"", "text/plain", {"Location": f"/{prefix}/{user['company_id']}.{item[secret]}"})
 
     def _g_me(self, m) -> None:
@@ -1617,6 +1622,8 @@ class Handler(BaseHTTPRequestHandler):
             page = domain.page(rows, offset, limit, (q.get("job") or [""])[0])
             if key == "email_log":
                 domain.mark_moot(state, page["entries"])
+                if not has_perm(user, "sensitive_docs", state):
+                    page = profiles.hide_sensitive_text(page, state)   # the client pages' addresses (H2)
         self._json(200, page)
 
     # ----- Communications and Import/Export (the comms-data stream) -----
