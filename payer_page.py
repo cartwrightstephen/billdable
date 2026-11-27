@@ -146,6 +146,13 @@ def _sheet(job: dict[str, Any], invoice: dict[str, Any]) -> str:
         cells = [_e(e.get("item", "")), _e(e.get("description", "")), money(c["scheduled"]), money(c["previous"]), money(c["this_period"]),
                  money(c["stored"]), _e(sov.qty_to_date(e)), money(c["to_date"]), f"{c['pct']}%", money(c["balance"])] + ([money(c["retainage"])] if held else [])
         rows.append("<tr>" + "".join(f"<td>{x}</td>" for x in cells) + "</tr>")
+    # Overhead and profit, and change orders billed while unsigned, as their own rows as on the PDF,
+    # so the to-date column adds up to "Completed and stored to date" above.
+    import gcforms
+    for r in gcforms.sheet_rows(job, invoice)[len(entries):]:
+        cells = ["", _e(r["description"]), money(r["scheduled"]), money(r["previous"]), money(r["this_period"]), money(r["stored"]), "",
+                 money(r["to_date"]), f"{r['pct']}%", money(r["balance"])] + ([money(r["retainage"])] if held else [])
+        rows.append("<tr>" + "".join(f"<td>{x}</td>" for x in cells) + "</tr>")
     return ('<h2>Continuation sheet</h2><div class="card sheet"><table><tr>' + "".join(f"<th>{_e(h)}</th>" for h in heads) + "</tr>"
             + "".join(rows) + "</table></div>")
 

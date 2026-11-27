@@ -203,5 +203,26 @@ class PayerPageRetainageColumnTests(unittest.TestCase):
         self.assertIn("$100.00", html)
 
 
+    def test_overhead_and_unsigned_change_orders_have_their_rows(self):
+        """The client's page listed only the schedule lines: overhead and profit and a change order
+        billed unsigned, which the PDF prints as rows, were missing, so its sheet didn't add up to
+        the completed to date shown above it."""
+        import payer_page
+        import test_packet
+        state = test_packet.new_state()
+        job = test_packet.new_job(state, contract=1_000_000, retainage=10, packet="Invoice.")
+        domain.save_sov(state, job["id"], [{"item": "1", "description": "Labor", "quantity": "1", "unit": "LS", "rate": "10000"}], "10",
+                        update_contract=True)
+        (labor,) = (line["id"] for line in __import__("sov").lines(job))
+        domain.add_change_order(state, job["id"], "Extra outlet", 25_000)
+        domain.include_change_order(state, job["id"], job["change_orders"][-1]["id"])
+        domain.record_sov_progress(state, job["id"], {labor: "0.5"})
+        inv = next(i for i in job["invoices"] if i["status"] in domain.DRAFT_STATUSES)
+        html = payer_page._sheet(job, inv)
+        self.assertIn("Overhead and profit 10%", html)
+        self.assertIn("CO 1 (unsigned)", html)
+        self.assertEqual(domain.payapp_figures(job, inv)["completed"], 5_000_00 + 500_00 + 250_00)
+
+
 if __name__ == "__main__":
     unittest.main()
