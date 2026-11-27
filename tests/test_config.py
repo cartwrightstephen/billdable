@@ -22,7 +22,13 @@ GOOD = {
     "DURACASH_ENV": "production",
     "COOKIE_SECURE": "1",
     "DURACASH_URL": "https://app.duracash.example",
+    # Off-site backups and alerts (H1).
+    "BACKUP_S3_ENDPOINT": "https://s3.example", "BACKUP_S3_BUCKET": "b", "BACKUP_S3_REGION": "r",
+    "BACKUP_S3_KEY_ID": "k", "BACKUP_S3_SECRET": "s", "BACKUP_AGE_RECIPIENT": "age1example",
+    "ALERT_WEBHOOK_URL": "https://hooks.example/alert",
 }
+RECOVERY = ("BACKUP_S3_ENDPOINT", "BACKUP_S3_BUCKET", "BACKUP_S3_REGION", "BACKUP_S3_KEY_ID", "BACKUP_S3_SECRET",
+            "BACKUP_AGE_RECIPIENT", "ALERT_WEBHOOK_URL")
 
 
 class ConfigTests(unittest.TestCase):
@@ -31,7 +37,8 @@ class ConfigTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
 
     def env(self, **values):
-        clean = {k: v for k, v in os.environ.items() if k not in {*GOOD, "DURACASH_DATA_DIR", "DURACASH_DATA_PERSISTENT"}}
+        clean = {k: v for k, v in os.environ.items() if k not in {*GOOD, "DURACASH_DATA_DIR", "DURACASH_DATA_PERSISTENT", "DURACASH_DEMO",
+                                                                  "DURACASH_ALLOW_NO_OFFSITE", "RENDER"}}
         return mock.patch.dict(os.environ, {**clean, **values}, clear=True)
 
     def test_development_has_no_requirements(self):
@@ -43,7 +50,7 @@ class ConfigTests(unittest.TestCase):
     def test_production_complete_config_starts(self):
         with self.env(**GOOD, DURACASH_DATA_DIR=self.tmp.name), mock.patch.object(storage, "DATA_DIR", Path(self.tmp.name)):
             self.assertTrue(server.production())
-            self.assertFalse(server.demo_enabled())
+            self.assertEqual(server.demo_mode(), "readonly", "production's demo is read-only unless turned off")
             self.assertEqual(server.config_problems(), [])
 
     def test_production_refuses_each_missing_setting(self):
@@ -54,6 +61,43 @@ class ConfigTests(unittest.TestCase):
         with self.env(**{**GOOD, "DURACASH_URL": "http://app.duracash.example"}, DURACASH_DATA_DIR=self.tmp.name), \
                 mock.patch.object(storage, "DATA_DIR", Path(self.tmp.name)):
             self.assertEqual(len(server.config_problems()), 1)
+
+    def test_production_refuses_without_offsite_backups_and_alerts(self):  # H1
+        good = lambda **over: self.env(**{**GOOD, **over}, DURACASH_DATA_DIR=self.tmp.name)
+        with mock.patch.object(storage, "DATA_DIR", Path(self.tmp.name)):
+            for name in RECOVERY:
+                with good(**{name: ""}):
+                    problems = server.config_problems()
+                    self.assertEqual(len(problems), 1, name)
+                    self.assertIn(name, problems[0])
+            empty = {name: "" for name in RECOVERY}
+            with good(**empty):
+                self.assertEqual(len(server.config_problems()), 3, "off-site, its key, and alerts")
+            # The way out for a deploy that must come up first: started, and said in the log.
+            with good(**empty, DURACASH_ALLOW_NO_OFFSITE="1"):
+                self.assertEqual(server.config_problems(), [])
+                self.assertEqual(len(server.recovery_problems()), 3)
+            # Alerts need an https:// webhook.
+            with good(ALERT_WEBHOOK_URL="http://hooks.example/alert"):
+                self.assertIn("ALERT_WEBHOOK_URL", " ".join(server.config_problems()))
+
+    def test_only_known_environments_start(self):  # H6
+        for value, want in (("production", "production"), ("Staging ", "staging"), ("development", "development"), ("", "development"),
+                            ("prod", "unknown"), ("stagign", "unknown"), ("test", "unknown")):
+            with self.env(DURACASH_ENV=value):
+                self.assertEqual(server.env_name(), want, value)
+                if want == "unknown":
+                    self.assertFalse(server.production())
+                    self.assertIn("must be production, staging or development", " ".join(server.config_problems()))
+                elif want != "production":
+                    self.assertEqual(server.config_problems(), [], value)
+        # Unset on Render (which sets RENDER=true) is refused: a missing setting must not mean development there.
+        with self.env(RENDER="true"):
+            self.assertIn("DURACASH_ENV is not set", " ".join(server.config_problems()))
+        with self.env(RENDER="true", DURACASH_ENV="staging"):
+            self.assertEqual(server.config_problems(), [])
+        with self.env(DURACASH_ENV="prod"), mock.patch.object(server, "log_json"), self.assertRaises(SystemExit):
+            server.main()
 
     def test_production_refuses_unmounted_disk(self):
         missing = Path(self.tmp.name) / "not-mounted"
@@ -117,7 +161,8 @@ class ProductionHttpTests(unittest.TestCase):
         res, _ = self.demo_login()
         self.assertEqual(res.status, 200)
         cookie = res.getheader("Set-Cookie").split(";")[0]
-        with mock.patch.dict(os.environ, {"DURACASH_ENV": "production"}):
+        # Production's demo is read-only by default; DURACASH_DEMO=off removes it.
+        with mock.patch.dict(os.environ, {"DURACASH_ENV": "production", "DURACASH_DEMO": "off"}):
             res, _ = self.request("GET", "/api/state", cookie=cookie)
             self.assertEqual(res.status, 401, "an existing demo session stops working")
             res, _ = self.request("GET", "/api/auth/me", cookie=cookie)

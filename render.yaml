@@ -33,6 +33,28 @@ services:
       # Set to 1 only after a deploy has been seen to keep accounts and data.
       - key: DURACASH_DATA_PERSISTENT
         sync: false
+      # Off-site backups and crash alerts (security review H1): production refuses to start without
+      # them. Fill them in the Render dashboard (README.md, Settings; offsite.py).
+      - key: BACKUP_S3_ENDPOINT
+        sync: false
+      - key: BACKUP_S3_BUCKET
+        sync: false
+      - key: BACKUP_S3_REGION
+        sync: false
+      - key: BACKUP_S3_KEY_ID
+        sync: false
+      - key: BACKUP_S3_SECRET
+        sync: false
+      # The age public key (age1...) the off-site copies are encrypted to; the private key stays off Render.
+      - key: BACKUP_AGE_RECIPIENT
+        sync: false
+      # An https:// incoming webhook (Slack, Discord, Better Stack) for crashes and failed backups (alerts.py).
+      - key: ALERT_WEBHOOK_URL
+        sync: false
+      # Only until the settings above are filled: 1 starts production without them, with a warning
+      # in the log on every start. Remove it once off-site backups and alerts work.
+      - key: DURACASH_ALLOW_NO_OFFSITE
+        sync: false
 
   # Staging (P1-13): deploys dev, so a change is tried on a real server before main.
   # Free plan, no disk: its data is throwaway and the landing page says so.
@@ -50,6 +72,9 @@ services:
     envVars:
       - key: DURACASH_ENV
         value: staging
+      # The demo's password is public (security review M9): visitors look around, nothing changes.
+      - key: DURACASH_DEMO
+        value: readonly
       - key: COOKIE_SECURE
         value: "1"
       - key: DURACASH_URL

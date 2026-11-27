@@ -192,9 +192,23 @@ def app_url() -> str | None:
     return url if re.match(r"^https?://[^\s/]+", url) else None
 
 
+ENVIRONMENTS = ("production", "staging", "development")
+
+
+def env_name() -> str:
+    """DURACASH_ENV as the server reads it: production, staging or development (H6). Unset is
+    development, which is what a laptop or a test runs as. Anything else (a typo, "prod") is
+    "unknown", and the server refuses to start with it (config_problems), as it does with an unset
+    value on Render, where a missing setting must never mean the lenient development rules."""
+    value = (os.environ.get("DURACASH_ENV") or "").strip().lower()
+    if not value:
+        return "development"
+    return value if value in ENVIRONMENTS else "unknown"
+
+
 def production() -> bool:
     """DURACASH_ENV=production: no demo tenant, and startup refuses a half-set configuration."""
-    return (os.environ.get("DURACASH_ENV") or "").strip().lower() == "production"
+    return env_name() == "production"
 
 
 def demo_mode() -> str:
@@ -257,8 +271,19 @@ def data_notice() -> bool:
     return os.environ.get("DURACASH_DATA_PERSISTENT") != "1"
 
 
+def on_render() -> bool:
+    """Render sets RENDER=true in every service's environment."""
+    return bool((os.environ.get("RENDER") or "").strip())
+
+
 def config_problems() -> list[str]:
-    """What stops a production start. Empty outside production."""
+    """What stops a start: a DURACASH_ENV the server doesn't know, an unset one on Render (H6), and
+    in production a half-set configuration. Empty in development and staging."""
+    raw = (os.environ.get("DURACASH_ENV") or "").strip()
+    if env_name() == "unknown":
+        return [f"DURACASH_ENV is {raw!r}; it must be production, staging or development."]
+    if not raw and on_render():
+        return ["DURACASH_ENV is not set. On Render set it to production or staging."]
     if not production():
         return []
     problems = []
@@ -271,7 +296,53 @@ def config_problems() -> list[str]:
     url = app_url()
     if not url or not url.startswith("https://"):
         problems.append("DURACASH_URL must be the site's https:// address, so emailed links work.")
+    # Off-site backups and crash alerts (H1): without them a lost disk loses every company, and a
+    # crash or failed backup goes unseen. DURACASH_ALLOW_NO_OFFSITE=1 starts anyway, logged on
+    # every start (main), for a deploy that has to come up before they are set.
+    if os.environ.get("DURACASH_ALLOW_NO_OFFSITE") != "1":
+        problems.extend(recovery_problems())
     return problems
+
+
+def recovery_problems() -> list[str]:
+    """What production lacks for recovering from a lost disk and hearing about trouble (H1)."""
+    problems = []
+    if not offsite.configured():
+        problems.append("Off-site backups are not set up: set BACKUP_S3_ENDPOINT, BACKUP_S3_BUCKET, BACKUP_S3_REGION, "
+                        "BACKUP_S3_KEY_ID and BACKUP_S3_SECRET (README.md, Settings).")
+    if not offsite.settings()["recipient"]:
+        problems.append("BACKUP_AGE_RECIPIENT is not set, so off-site backups can't be encrypted.")
+    if not alerts.url():
+        problems.append("ALERT_WEBHOOK_URL is not set (an https:// incoming webhook), so crashes and failed backups go unseen.")
+    return problems
+
+
+def health_details() -> dict:
+    """What /healthz checks, with the details it no longer shows the public (admin.py health)."""
+    writable = True
+    try:
+        probe = storage.DATA_DIR / f".health-{secrets.token_hex(4)}"
+        storage.DATA_DIR.mkdir(parents=True, exist_ok=True)
+        probe.write_text("ok")
+        probe.unlink()
+    except OSError:
+        writable = False
+    try:
+        free_mb = shutil.disk_usage(storage.DATA_DIR).free // (1024 * 1024)
+    except OSError:
+        free_mb = None
+    roomy = free_mb is None or free_mb >= DISK_FREE_MIN_MB
+    ok = writable and roomy
+    return {
+        "ok": ok,
+        "storage": "ok" if ok else "not writable" if not writable else f"under {DISK_FREE_MIN_MB} MB free",
+        "disk_free_mb": free_mb,
+        "email": "configured" if mailer.configured() else "not set up",
+        "last_backup": backup.newest_time(),
+        "offsite_backup": offsite.last_upload() if offsite.configured() else "not set up",
+        "alerts": "configured" if alerts.url() else "not set up",
+        "env": env_name(),
+    }
 
 
 SECRET_PATHS = (
@@ -1085,30 +1156,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def _g_healthz(self, m) -> None:
         # For an uptime monitor: no sign-in, no secrets, 503 when data can't be written or the
-        # disk is nearly full (R6-06: a full disk fails every save and every backup).
-        writable = True
-        try:
-            probe = storage.DATA_DIR / f".health-{secrets.token_hex(4)}"
-            storage.DATA_DIR.mkdir(parents=True, exist_ok=True)
-            probe.write_text("ok")
-            probe.unlink()
-        except OSError:
-            writable = False
-        try:
-            free_mb = shutil.disk_usage(storage.DATA_DIR).free // (1024 * 1024)
-        except OSError:
-            free_mb = None
-        roomy = free_mb is None or free_mb >= DISK_FREE_MIN_MB
-        ok = writable and roomy
-        self._json(200 if ok else 503, {
-            "ok": ok,
-            "storage": "ok" if ok else "not writable" if not writable else f"under {DISK_FREE_MIN_MB} MB free",
-            "disk_free_mb": free_mb,
-            "email": "configured" if mailer.configured() else "not set up",
-            "last_backup": backup.newest_time(),
-            "offsite_backup": offsite.last_upload() if offsite.configured() else "not set up",
-            "env": "production" if production() else "development",
-        })
+        # disk is nearly full (R6-06: a full disk fails every save and every backup). Public, so
+        # it says only whether all is well and where (L4); the details are for the founders, from
+        # `python3 admin.py health` on the server, and in the log when the check fails.
+        details = health_details()
+        if not details["ok"]:
+            log_json("warn", msg="health check failing", storage=details["storage"], disk_free_mb=details["disk_free_mb"], rid=self._rid)
+        self._json(200 if details["ok"] else 503, {"ok": details["ok"], "env": env_name()})
 
     def _g_team(self, m, user) -> None:
         self._json(200, self._team_reply(user))

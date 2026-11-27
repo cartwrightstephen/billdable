@@ -486,16 +486,22 @@ class AccountHttpTests(ServerCase):
     def test_health_check(self):
         res, data = self.request("GET", "/healthz")
         self.assertEqual(res.status, 200)
-        self.assertEqual(set(data), {"ok", "storage", "disk_free_mb", "email", "last_backup", "offsite_backup", "env"})
-        self.assertTrue(data["ok"])
-        self.assertIsInstance(data["disk_free_mb"], int)
+        # Public: only whether all is well and the environment (L4); the rest is admin.py health.
+        self.assertEqual(data, {"ok": True, "env": "development"})
         self.assertTrue(res.getheader("X-Request-Id"))
+        details = server.health_details()
+        self.assertLessEqual({"ok", "storage", "disk_free_mb", "email", "last_backup", "offsite_backup", "alerts", "env"}, set(details))
+        self.assertIsInstance(details["disk_free_mb"], int)
         # A nearly full disk fails every save and backup: the monitor hears it first (R6-06).
         nearly_full = type("Usage", (), {"free": 150 * 1024 * 1024})()
         with mock.patch.object(server.shutil, "disk_usage", lambda path: nearly_full):
             res, data = self.request("GET", "/healthz")
-        self.assertEqual((res.status, data["ok"], data["disk_free_mb"]), (503, False, 150))
-        self.assertEqual(data["storage"], "under 200 MB free")
+            details = server.health_details()
+        self.assertEqual((res.status, data), (503, {"ok": False, "env": "development"}))
+        self.assertEqual((details["disk_free_mb"], details["storage"]), (150, "under 200 MB free"))
+        with mock.patch.dict(os.environ, {"DURACASH_ENV": "staging"}):
+            _, data = self.request("GET", "/healthz")
+        self.assertEqual(data["env"], "staging", "staging no longer reads as development")
 
     def test_crash_gives_a_request_id(self):
         cookie, _ = self.signup("crash@pine.example")

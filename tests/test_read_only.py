@@ -26,9 +26,12 @@ PASSWORD = "correct horse battery"
 
 class DemoModeTests(unittest.TestCase):
     def test_modes(self):
-        cases = [({}, "on"), ({"DURACASH_ENV": "production"}, "off"),
+        # Production's demo is read-only unless turned off (the sample company on the landing page);
+        # it is never writable there, whatever DURACASH_DEMO says.
+        cases = [({}, "on"), ({"DURACASH_ENV": "production"}, "readonly"),
                  ({"DURACASH_ENV": "production", "DURACASH_DEMO": "readonly"}, "readonly"),
-                 ({"DURACASH_ENV": "production", "DURACASH_DEMO": "on"}, "off"),
+                 ({"DURACASH_ENV": "production", "DURACASH_DEMO": "on"}, "readonly"),
+                 ({"DURACASH_ENV": "production", "DURACASH_DEMO": "off"}, "off"),
                  ({"DURACASH_DEMO": "off"}, "off"), ({"DURACASH_DEMO": "readonly"}, "readonly")]
         for env, want in cases:
             with mock.patch.dict("os.environ", {"DURACASH_ENV": "", "DURACASH_DEMO": "", **env}):
@@ -137,10 +140,10 @@ class ReadOnlyHttpTests(unittest.TestCase):
             tokens = importer.company_tokens(auth.DEMO_COMPANY_ID)
             inbox_before = len(server.load_company(auth.DEMO_COMPANY_ID).get("inbox", []))
             for path in (f"/api/inbound/email/{tokens['email']}", f"/api/inbound/sms/{tokens['sms']}"):
-                res, data = self.request("POST", path, {"from": "x@example.com", "text": "spam"})
+                res, data = self.request("POST", path, {"from": "x@example.com", "text": "spam"}, headers={"Authorization": "Basic " + base64.b64encode(b"d:pw").decode()})
                 self.assertEqual((res.status, data.get("ignored")), (200, "the demo is read-only"), path)
             self.assertEqual(len(server.load_company(auth.DEMO_COMPANY_ID).get("inbox", [])), inbox_before)
-        with mock.patch.dict("os.environ", {"DURACASH_ENV": "production", "DURACASH_DEMO": ""}):
+        with mock.patch.dict("os.environ", {"DURACASH_ENV": "production", "DURACASH_DEMO": "off"}):
             res, _ = self.request("GET", "/api/state", cookie=cookie)
             self.assertEqual(res.status, 401, "with the demo off, its sessions stop working")
 
