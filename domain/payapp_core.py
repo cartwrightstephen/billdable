@@ -374,9 +374,15 @@ def import_earlier_payapps(state: dict[str, Any], job_id: str, body: Any, actor:
     if made_here:
         raise D.GateError(f"{made_here[0]['number']} was made in Duracash. Earlier pay apps are entered before the first one here"
                           + (": delete the draft first." if made_here[0]["status"] in D.DRAFT_STATUSES else "."))
-    if not sov.has_sov(job):
-        raise D.GateError("Set up the schedule of values first: earlier pay apps are entered line by line.")
     body = body if isinstance(body, dict) else {}
+    if not sov.has_sov(job):
+        # A lump-sum job from before every job had a schedule (Nov 27 audit): one line for the
+        # contract amount, as a new job gets, and the page's "contract" line is that line.
+        line = sov.auto_line(int(job.get("contract_cents") or 0), "sov-" + secrets.token_hex(8))
+        job["sov"] = {"op_bp": 0, "lines": [line] + [l for l in sov.lines(job) if l.get("co_id")]}
+        for raw in ([body.get("summary")] if isinstance(body.get("summary"), dict) else body.get("payapps") or []):
+            if isinstance(raw, dict) and isinstance(raw.get("lines"), dict) and "contract" in raw["lines"]:
+                raw["lines"][line["id"]] = raw["lines"].pop("contract")
     summary = isinstance(body.get("summary"), dict)
     raw_apps = [body["summary"]] if summary else body.get("payapps")
     if not isinstance(raw_apps, list) or not raw_apps:

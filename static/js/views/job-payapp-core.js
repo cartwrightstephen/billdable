@@ -32,8 +32,17 @@ function earlierRowsHtml(j) {
   }).join("");
 }
 
+// The lines earlier pay apps are entered on: the schedule's, or for a lump-sum job from before
+// every job had one, the contract amount as one line (the server makes it on save; Nov 27 audit).
+export function earlierLines(j) {
+  const v = j.sov_view || {};
+  if (v.present) return v.lines || [];
+  const contract = (j.money && j.money.contract_cents) || j.contract_cents || 0;
+  return [{ id: "contract", item: "1", description: "Contract amount", scheduled_cents: contract, billed_cents: 0 }];
+}
+
 function lineBoxes(j, form) {
-  const lines = ((j.sov_view || {}).lines || []);
+  const lines = earlierLines(j);
   const summary = earlierMode === "summary";
   const head = earlierLinesAs === "pct" ? "% complete to date" : summary ? "Billed to date ($)" : "Billed this period ($)";
   return `<div class="table-wrap sov-wrap"><table class="sov-table">
@@ -76,7 +85,7 @@ export function earlierCardHtml(j) {
   return `<div class="card earlier-payapps" id="earlier-card">
     <h2>Earlier pay apps (before Duracash)</h2>
     ${earlierRowsHtml(j)}
-    ${open ? ((j.sov_view || {}).present ? earlierFormHtml(j) : `<p class="sub">Set up the schedule of values first: earlier pay apps are entered line by line.</p>`)
+    ${open ? earlierFormHtml(j)
       : e.can_enter && may("earlier-payapps") ? `<div class="form-inline"><button class="btn small secondary" data-action="earlier-open" data-id="${j.id}">Enter another</button>
         ${e.count ? `<button class="btn small secondary danger-text" data-action="earlier-remove" data-id="${j.id}">Take them off</button>` : ""}</div>` : ""}
     ${e.count ? `<p class="sub">The next pay app here is ${e.next_number}.</p>` : ""}
@@ -94,7 +103,7 @@ async function earlierSave(jobId) {
   const v = formValues("earlier");
   const j = state.jobs.find(x => x.id === jobId);
   const lines = {};
-  const viewLines = (j && j.sov_view && j.sov_view.lines) || [];
+  const viewLines = j ? earlierLines(j) : [];
   for (const l of viewLines) {
     const raw = v[`line_${unesc(l.id)}`] || "";
     if (!raw) continue;

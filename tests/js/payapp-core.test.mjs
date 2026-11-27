@@ -72,3 +72,16 @@ test("the retainage percent boxes show % inside the box (Nov 26 walkthrough; Nov
   assert.match(html, />Retainage this period</);
   assert.match(core.lineRetainageHtml(j), /<span class="with-suffix inline"><input id="lr-l1"[^>]*><span class="suffix" aria-hidden="true">%<\/span><\/span>/);
 });
+
+test("earlier pay apps on a lump-sum job with no schedule: the contract amount is the one line (Nov 27 audit)", async () => {
+  const page = await import("../../static/js/state.js");
+  page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
+  page.formOpen.earlier = true;
+  const j = { id: "j2", closed: false, invoices: [], payments: [], money: { contract_cents: 1_000_000 }, sov_view: { present: false },
+    earlier_payapps: { count: 0, can_enter: true, next_number: "PA-OLD-01" } };
+  assert.deepEqual(core.earlierLines(j).map(l => [l.id, l.description, l.scheduled_cents]), [["contract", "Contract amount", 1_000_000]]);
+  const html = core.earlierCardHtml(j);
+  assert.match(html, /id="ep-line-contract"/);
+  assert.doesNotMatch(html, /Set up the schedule of values first/);
+  page.formOpen.earlier = false;
+});

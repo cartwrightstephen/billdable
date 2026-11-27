@@ -140,6 +140,24 @@ class PredictedPayTermsTests(unittest.TestCase):
             self.assertEqual((p["on"], p["basis"]), (want, "terms"), sent)
 
 
+class LumpSumEarlierPayAppsTests(unittest.TestCase):
+    """Item 27: a lump-sum job with no schedule of values starts mid-project too: the contract
+    amount becomes its one line, as a new job's is."""
+    def test_a_job_without_a_schedule_takes_its_earlier_pay_apps(self):
+        state = new_state()
+        job = new_job(state, contract=1_000_000)
+        job.pop("sov", None)
+        domain.import_earlier_payapps(state, job["id"], {"summary": {"number": "3", "period_to": "2026-10-31",
+                                                                      "lines": {"contract": {"to_date": "4000"}}, "paid": "3600", "paid_on": "2026-11-10"}})
+        import sov
+        self.assertTrue(sov.has_sov(job))
+        line = sov.lines(job)[0]
+        self.assertEqual((line["scheduled_cents"], line["description"], line.get("auto")), (1_000_000, "Contract amount", True))
+        (earlier,) = domain.imported_invoices(job)
+        self.assertEqual(earlier["gross_cents"], 400_000)
+        self.assertTrue(earlier["number"].endswith("03"))
+
+
 class ZipStateTests(unittest.TestCase):
     """Item 4: the server asks the page's question about a ZIP from another state; never refuses."""
     def test_the_question_matches_the_page(self):
