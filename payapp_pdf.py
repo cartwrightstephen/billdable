@@ -178,10 +178,11 @@ def summary(job: dict[str, Any], invoice: dict[str, Any]) -> dict[str, int]:
 
 
 def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, Any], invoice: dict[str, Any],
-           approvals: list[dict[str, Any]] | None = None) -> bytes:
+           approvals: list[dict[str, Any]] | None = None, anchors: bool = False) -> bytes:
     """`company` is the company record (name, address, phone, license) or, for older callers, its name.
     `approvals`: the signatures for the Approved by block (domain.signed_approvals); for_invoice
-    passes them."""
+    passes them. `anchors`: the copy signed in DocuSign, with white anchor words on the contractor's
+    signature and date lines (docusign.py puts its tabs there)."""
     company = {"name": company} if isinstance(company, str) else (company or {})
     company_name = company.get("name", "")
     figures = summary(job, invoice)
@@ -263,6 +264,10 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
         p.text(MARGIN + 20, y, f"Retainage released to date, recorded separately: {_money(figures['released'])}.", "F1", 9)
     y -= 30
     p.text(MARGIN + 20, y, "Contractor signature: ____________________________________     Date: ______________", "F1", 10)
+    if anchors:
+        # White, so the printed page looks the same; on the first underline and after "Date:".
+        p.ops.append(b"q 1 1 1 rg BT /F1 10 Tf %g %g Td (/ds_sign1/) Tj ET Q" % (MARGIN + 140, y))
+        p.ops.append(b"q 1 1 1 rg BT /F1 10 Tf %g %g Td (/ds_date1/) Tj ET Q" % (MARGIN + 360, y))
     # "Approval ... involve[s] application of a signature to a document" (Stephen, 18 Nov): each
     # approver's typed signature, title and date, as kept with the pay app when it went.
     if approvals:
@@ -417,8 +422,9 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
     return _build(pages)
 
 
-def for_invoice(state: dict[str, Any], job_id: str, invoice_id: str) -> tuple:
-    """(PDF bytes, file name) of one pay app in a company's state, or (None, None) when it is gone."""
+def for_invoice(state: dict[str, Any], job_id: str, invoice_id: str, anchors: bool = False) -> tuple:
+    """(PDF bytes, file name) of one pay app in a company's state, or (None, None) when it is gone.
+    anchors: the copy for DocuSign (render)."""
     job = next((j for j in state.get("jobs", []) if j["id"] == job_id), None)
     invoice = next((i for i in (job or {}).get("invoices", []) if i["id"] == invoice_id), None)
     if not invoice:
@@ -426,4 +432,4 @@ def for_invoice(state: dict[str, Any], job_id: str, invoice_id: str) -> tuple:
     payer = next((p for p in state.get("payers", []) if p["id"] == job["payer_id"]), {})
     name = re.sub(r"[^A-Za-z0-9._-]", "-", invoice["number"]) + ".pdf"
     import domain   # here: domain imports this module
-    return render(state.get("company", {}), job, payer, invoice, domain.signed_approvals(state, job, invoice)), name
+    return render(state.get("company", {}), job, payer, invoice, domain.signed_approvals(state, job, invoice), anchors=anchors), name

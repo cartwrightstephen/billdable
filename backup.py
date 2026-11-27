@@ -48,6 +48,7 @@ import store
 # small and guarded by its own lock, if any (the key in make_backup's `locks`).
 TOP_FILES = (("auth.json", "auth"), ("inbound_tokens.json", "tokens"), ("helper_answers.json", None), ("helper_log.json", None),
              ("mail_sends.json", None), ("deleted_companies.json", "deleted"), ("qbo_connections.json", "qbo"),
+             ("docusign_connections.json", "docusign"), ("docusign_envelopes.json", "docusign"),
              ("monthly_jobs.json", None), ("daily_jobs.json", None))
 TOP_NAMES = tuple(name for name, _ in TOP_FILES)
 
