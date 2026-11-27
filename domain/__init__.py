@@ -1557,7 +1557,7 @@ def _need_waiver_answers(state: dict[str, Any], job: dict[str, Any], packet: lis
 def approve_and_send(
     state: dict[str, Any], job_id: str, actor: str = "owner", link_base: str | None = None, company_id: str = "",
     unconditional_override: str = "", reviewed: str | None = None, read_file: Any = None, soft_checks: Any = None,
-    today: Any = "",
+    today: Any = "", client_form_check: Any = None,
 ) -> dict[str, Any]:
     """Send the open draft. A signed unconditional waiver going with it is refused (M14) unless
     unconditional_override gives the reason (the server lets only an owner give one); the
@@ -1589,6 +1589,12 @@ def approve_and_send(
         raise GateError("Check these before it goes: say each was checked, or isn't needed this time.", [soft_question(i) for i in waiting_soft],
                         extra={"soft_checks": [{"item_id": i["id"], "label": i["label"], "question": soft_question(i)} for i in waiting_soft]},
                         keep_changes=answered)
+    if client_form_check:   # the client's own form (gcforms.send_problems, from the server): after the gates above
+        try:
+            client_form_check(state, job_id)
+        except GateError as exc:
+            exc.keep_changes = exc.keep_changes or answered   # soft checks answered on the way stay answered
+            raise
     _need_playbook(state, job)
     if reviewed is not None and reviewed != review_stamp(state, job, invoice):
         raise GateError(f"{invoice['number']} changed since you opened it. Look it over again, then send." if reviewed

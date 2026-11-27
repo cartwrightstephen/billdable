@@ -62,9 +62,16 @@ class ClientFormsHttp(ServerCase):
         res, pdf = self.request("GET", view["forms"][0]["url"], cookie=cookie)
         self.assertEqual(res.status, 200)
         self.assertEqual(pdf_forms.field_values(pdf)["Row.1.Desc"], "Contract amount", "the job's one lump-sum line")
+        # Integration (Nov 27): the pay app's own stops come first (records' hard gates), then the client's form.
+        res, out = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
+        self.assertEqual((res.status, out["error"]), (409, "Pay app blocked."), out)
+        for item in inv["packet"]:
+            if item["required"] and not item["present"]:
+                self.request("POST", f"/api/jobs/{job['id']}/resolve/{item['id']}", {"reason": "In hand"}, cookie=cookie)
         res, out = self.request("POST", f"/api/jobs/{job['id']}/send", {}, cookie=cookie)
         self.assertEqual(res.status, 409, out)
         self.assertIn("Park GC's pay app (cover page): AppNo (Contract number) has no value", out["error"])
+        self.assertTrue(out.get("client_form"))
         # Emails carrying only Duracash's PDF don't wait on the client's form.
         res, out = self.request("POST", f"/api/payers/{payer_id}/client-forms/send", {"send": "ours"}, cookie=cookie)
         self.assertEqual((res.status, out["client_forms"]["send"]), (200, "ours"))

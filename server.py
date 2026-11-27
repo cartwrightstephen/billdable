@@ -4364,13 +4364,18 @@ def _send_payapp(h, st, j, i, c):
     if override and c.user.get("role", "owner") != "owner":
         raise domain.GateError("Only an owner can send a pay app with an unconditional waiver attached.")
     soft = c.body.get("soft_checks")
-    # A client whose emails carry their own form: refused while that form can't be filled right.
-    on_their_form = gcforms.send_problems(st, j)
-    if on_their_form:
-        raise domain.GateError(on_their_form[0] + (f" ({len(on_their_form) - 1} more on the pay app page.)" if len(on_their_form) > 1 else ""))
+
+    def their_form(state: dict, job_id: str) -> None:
+        # A client whose emails carry their own form: refused while that form can't be filled right.
+        # Asked by approve_and_send after a stale screen, hard stops and soft checks, before the
+        # waivers and approvals: those are about this pay app; this is about the client's setup.
+        problems = gcforms.send_problems(state, job_id)
+        if problems:
+            raise domain.GateError(problems[0] + (f" ({len(problems) - 1} more on the pay app page.)" if len(problems) > 1 else ""),
+                                   extra={"client_form": True})
     return domain.approve_and_send(st, j, c.actor, unconditional_override=override, reviewed=_text(c.body, "reviewed"),
                                    read_file=_file_reader(c.company_id, c.read_ahead), soft_checks=soft if isinstance(soft, dict) else None,
-                                   today=_text(c.body, "today"), **_co_args(c))
+                                   today=_text(c.body, "today"), client_form_check=their_form, **_co_args(c))
 
 
 def _received_on(body: dict) -> str | None:

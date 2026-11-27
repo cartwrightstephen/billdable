@@ -379,9 +379,47 @@ class SendPath(Uploads):
         self.assertEqual([w["form_type"] for w in view["waivers"]], ["conditional_progress"])
         self.assertEqual([f["form_type"] for f in view["forms"]], ["payapp"])
 
+    # Integration (Nov 27): the client's form among records' gates, and Revise.
 
-if __name__ == "__main__":
-    unittest.main()
+    def test_soft_checks_come_before_the_client_form_and_stay_answered(self):
+        soft = self.inv["packet"][0]
+        soft["present"] = False
+        self.job["paperwork_gates"] = {domain.gate_key(soft): "soft"}
+        approve_help.sign_all(self.state, self.job["id"])
+        stamp = domain.review_stamp(self.state, self.job, self.inv)
+
+        def form_refuses(state, job_id):
+            raise domain.GateError("Peach GC's pay app (cover page): AppNo has no value", extra={"client_form": True})
+        with self.assertRaises(domain.GateError) as caught:
+            domain.approve_and_send(self.state, self.job["id"], "Owner", reviewed=stamp, client_form_check=form_refuses)
+        self.assertIn("soft_checks", caught.exception.extra, "the soft question first")
+        with self.assertRaises(domain.GateError) as caught:
+            domain.approve_and_send(self.state, self.job["id"], "Owner", reviewed=stamp, soft_checks={soft["id"]: "checked"},
+                                    client_form_check=form_refuses)
+        self.assertTrue(caught.exception.extra.get("client_form"))
+        self.assertTrue(caught.exception.keep_changes, "the soft answer given on the way is kept")
+        self.assertEqual(soft["soft_check"]["answer"], "checked")
+
+    def test_a_revised_pay_app_goes_again_on_the_client_form_with_its_new_figures(self):
+        gcforms.save_mapping(self.state, self.payer_id, self.tpl["id"], {"mapping": [
+            {"field": "ContractSum", "source": "current_due"}, {"field": "AppNo", "source": "application_count"},
+            {"field": "Row.1.Desc", "source": "line.description", "row": 1}, {"field": "Row.2.Desc", "source": "line.description", "row": 2},
+            {"field": "Owner", "source": "client"}],
+            "money_format": "dollars"}, "Pat")
+        approve_help.approve_and_send(self.state, self.job["id"], "Owner")
+        first = pdf_forms.field_values(next(v for n, v in self.attachments(self.deliver()[0]).items() if n.endswith("client-form.pdf")))
+        self.assertEqual(first["ContractSum"], domain.money(self.inv["amount_cents"]))
+        domain.revise_sent_pay_app(self.state, self.job["id"], self.inv["id"], "Wrong amount", "Pat")
+        domain.record_progress(self.state, self.job["id"], 5_000_000)
+        again = clear_packet(self.state, self.job)
+        self.assertEqual(again["number"], self.inv["number"])
+        self.assertEqual(gcforms.send_problems(self.state, self.job["id"]), [])
+        approve_help.approve_and_send(self.state, self.job["id"], "Owner")
+        sent = self.deliver()
+        self.assertTrue(sent, [(e["kind"], e["status"]) for e in self.state["email_log"]])
+        second = pdf_forms.field_values(next(v for n, v in self.attachments(sent[-1]).items() if n.endswith("client-form.pdf")))
+        self.assertEqual((second["AppNo"], second["ContractSum"]), ("1", domain.money(again["amount_cents"])), "the same pay app 1, its new amount")
+        self.assertNotEqual(second["ContractSum"], first["ContractSum"], "filled again from the revised pay app")
 
 
 class PayappCoreValues(Uploads):
@@ -424,3 +462,6 @@ class PayappCoreValues(Uploads):
         with self.assertRaises(domain.GateError) as caught:
             gcforms.for_invoice(st2, "co-t", job2["id"], earlier["id"], "payapp")
         self.assertIn("billed before Duracash", str(caught.exception))
+
+if __name__ == "__main__":
+    unittest.main()
