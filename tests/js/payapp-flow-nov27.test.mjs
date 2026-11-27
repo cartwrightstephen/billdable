@@ -34,7 +34,8 @@ test("soft items are asked at Review & send; a hard one is what is missing", () 
   assert.match(html, /data-action="packet-soft-check" data-id="j1" data-item="b" data-answer="checked">Checked</);
   assert.match(html, /data-item="b" data-answer="not_needed">Not needed this time</);
   assert.match(html, /Any stored materials received this period to bill\?/);
-  assert.match(html, /data-item="c" data-answer="checked">Yes, they're on this pay app</);
+  // Yes opens the stored materials boxes on the Progress pay app page (Nov 27, pay-app core).
+  assert.match(html, /data-action="stored-enter" data-id="j1">Yes, enter them</);
   assert.match(html, /data-item="c" data-answer="not_needed">None this period</);
   assert.ok(paperwork.softWaiting(inv));
   inv.packet[1].soft_check = { answer: "checked", by: "Ana", at: "2026-11-27T12:00:00" };

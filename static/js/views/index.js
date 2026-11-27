@@ -10,6 +10,7 @@ import * as jobCos from "./job-cos.js";
 import * as jobSov from "./job-sov.js";
 import * as jobRecord from "./job-record.js";
 import * as jobPaperwork from "./job-paperwork.js";
+import * as jobPayappCore from "./job-payapp-core.js";
 import * as clients from "./clients.js";
 import * as inbox from "./inbox.js";
 import * as communications from "./communications.js";
@@ -29,7 +30,7 @@ import * as compliance from "./compliance.js";
 
 // name -> module, in the order the menu lists them. A module may export views, actions or both.
 export const MODULES = {
-  dashboard, daily, jobs, job, jobCos, jobSov, jobRecord, jobPaperwork, clients,
+  dashboard, daily, jobs, job, jobCos, jobSov, jobRecord, jobPaperwork, jobPayappCore, clients,
   inbox, communications, data,
   payapps, paperwork, changeorders, collections, payments, closeout, financials,
   automations, settings, auth, docusign, compliance,

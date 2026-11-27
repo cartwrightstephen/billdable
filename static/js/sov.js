@@ -126,10 +126,10 @@ export function sovPeriodHtml(j, canChange = false) {
   };
   const moneyRow = (label, cents, cls = "") => `<div class="money-row${cls}"><span class="label">${label}</span><span>${money(cents)}</span></div>`;
   const suggested = `${moneyRow("Suggested pay app value", p.suggested_gross_cents, " sov-suggested")}
-      ${p.suggested_retainage_cents ? moneyRow(`Less retainage ${p.retainage_pct}%`, -p.suggested_retainage_cents) + moneyRow("Suggested amount due", p.suggested_net_cents) : ""}
+      ${p.suggested_retainage_cents ? moneyRow(p.retainage_label || `Less retainage ${p.retainage_pct}%`, -p.suggested_retainage_cents) + moneyRow("Suggested amount due", p.suggested_net_cents) : ""}
       ${p.credit_waiting_cents ? `<p class="sub">Nothing to bill yet. The credit for ${(p.credit_waiting_names || []).join(", ") || "a signed change order"} takes ${money(p.credit_waiting_cents)} off the next pay app.</p>` : ""}`;
   const final = !draft ? "" : `${moneyRow(`On ${draft.number}`, p.final_gross_cents, " sov-suggested")}
-      ${p.final_retainage_cents ? moneyRow(`Less retainage ${p.retainage_pct}%`, -p.final_retainage_cents) + moneyRow("Amount due", p.final_net_cents) : ""}`;
+      ${p.final_retainage_cents ? moneyRow(p.retainage_label || `Less retainage ${p.retainage_pct}%`, -p.final_retainage_cents) + moneyRow("Amount due", p.final_net_cents) : ""}`;
   return `<div class="sov-period" data-form-key="sovamounts">
     <h3>This billing period</h3>
     <p class="sub">${when}.${editing ? ` Change any amount to bill what you decide; ${draft.number} uses your amounts. Clear a box to go back to the suggested amount.` : ""}</p>
@@ -191,6 +191,7 @@ export function sovProgressHtml(j, periodHtml = "", errorLine = "", extra = "") 
 // The same G703 columns as sov.sheet_columns(); entries from before stored materials
 // have no work/stored split, so all of their billing counts as work.
 export function sheetColumns(e, retPct) {
+  retPct = e.retainage_pct ?? retPct;   // a line held at its own percent (Nov 27)
   const stored = e.stored_cents || 0;
   const thisPeriod = e.work_this_cents ?? e.amount_cents;
   const previous = e.prev_work_cents ?? (e.to_date_cents - e.amount_cents - stored);
@@ -209,14 +210,15 @@ export function continuationHtml(inv, job) {
   const rows = (inv.sov_sheet && inv.sov_sheet.length ? inv.sov_sheet : inv.sov_lines) || [];
   if (!rows.length) return "";
   const retPct = (inv.retainage_pct ?? (job && job.retainage_pct)) || 0;   // as held on this pay app (R4-07)
+  const byLine = rows.some(e => e.retainage_pct != null);   // retainage by line (Nov 27)
   return `<div class="card">
     <h2>Continuation sheet</h2>
     <div class="table-wrap sov-wrap"><table class="sov-table">
-      <tr><th>Item</th><th>Description</th><th>Scheduled value</th><th>Previous</th><th>This period</th><th>Stored</th><th>Qty to date</th><th>Total to date</th><th>%</th><th>Balance to finish</th>${retPct ? `<th>Retainage ${retPct}%</th>` : ""}</tr>
-      ${rows.map(e => { const c = sheetColumns(e, retPct); return `<tr><td>${e.item}</td><td class="sov-desc-cell">${e.description}</td><td class="num">${money(e.scheduled_cents)}</td><td class="num">${money(c.previous)}</td><td class="num">${money(c.thisPeriod)}${e.qty_milli_this && e.unit.toUpperCase() !== "LS" ? `<div class="sub">${fmtQty(e.qty_milli_this)} ${e.unit}</div>` : ""}</td><td class="num">${money(c.stored)}</td><td class="num">${qtyToDate(e)}</td><td class="num">${money(e.to_date_cents)}</td><td class="num">${c.pct}%</td><td class="num">${money(c.balance)}</td>${retPct ? `<td class="num">${money(c.retainage)}</td>` : ""}</tr>`; }).join("")}
-      ${(inv.co_rows || []).map(r => `<tr><td></td><td class="sov-desc-cell">CO ${r.number}</td><td class="num">${money(r.scheduled_cents)}</td><td class="num">${money(r.previous_cents)}</td><td class="num">${money(r.this_cents)}</td><td class="num">${money(0)}</td><td></td><td class="num">${money(r.to_date_cents)}</td><td class="num">${r.scheduled_cents ? Math.floor(100 * r.to_date_cents / r.scheduled_cents) : 0}%</td><td class="num">${money(r.scheduled_cents - r.to_date_cents)}</td>${retPct ? `<td class="num">${money(Math.floor((r.to_date_cents * retPct + 50) / 100))}</td>` : ""}</tr>`).join("")}
-      ${inv.op_cents ? `<tr><td></td><td class="sov-desc-cell">Overhead and profit</td><td></td><td></td><td class="num">${money(inv.op_cents)}</td><td></td><td></td><td></td><td></td><td></td>${retPct ? "<td></td>" : ""}</tr>` : ""}
+      <tr><th>Item</th><th>Description</th><th>Scheduled value</th><th>Previous</th><th>This period</th><th>Stored</th><th>Qty to date</th><th>Total to date</th><th>%</th><th>Balance to finish</th>${retPct || byLine ? `<th>Retainage${byLine ? "" : ` ${retPct}%`}</th>` : ""}</tr>
+      ${rows.map(e => { const c = sheetColumns(e, retPct); return `<tr><td>${e.item}</td><td class="sov-desc-cell">${e.description}</td><td class="num">${money(e.scheduled_cents)}</td><td class="num">${money(c.previous)}</td><td class="num">${money(c.thisPeriod)}${e.qty_milli_this && e.unit.toUpperCase() !== "LS" ? `<div class="sub">${fmtQty(e.qty_milli_this)} ${e.unit}</div>` : ""}</td><td class="num">${money(c.stored)}</td><td class="num">${qtyToDate(e)}</td><td class="num">${money(e.to_date_cents)}</td><td class="num">${c.pct}%</td><td class="num">${money(c.balance)}</td>${retPct || byLine ? `<td class="num">${money(c.retainage)}${e.retainage_pct != null ? `<div class="sub">${e.retainage_pct}%</div>` : ""}</td>` : ""}</tr>`; }).join("")}
+      ${(inv.co_rows || []).map(r => `<tr><td></td><td class="sov-desc-cell">CO ${r.number}</td><td class="num">${money(r.scheduled_cents)}</td><td class="num">${money(r.previous_cents)}</td><td class="num">${money(r.this_cents)}</td><td class="num">${money(0)}</td><td></td><td class="num">${money(r.to_date_cents)}</td><td class="num">${r.scheduled_cents ? Math.floor(100 * r.to_date_cents / r.scheduled_cents) : 0}%</td><td class="num">${money(r.scheduled_cents - r.to_date_cents)}</td>${retPct || byLine ? `<td class="num">${money(Math.floor((r.to_date_cents * retPct + 50) / 100))}</td>` : ""}</tr>`).join("")}
+      ${inv.op_cents ? `<tr><td></td><td class="sov-desc-cell">Overhead and profit</td><td></td><td></td><td class="num">${money(inv.op_cents)}</td><td></td><td></td><td></td><td></td><td></td>${retPct || byLine ? "<td></td>" : ""}</tr>` : ""}
     </table></div>
-    ${retPct ? `<p class="sub">The retainage column is ${retPct}% of each line's total to date, for reference.</p>` : ""}
+    ${byLine ? `<p class="sub">The retainage column is each line's percent of its total to date, for reference.</p>` : retPct ? `<p class="sub">The retainage column is ${retPct}% of each line's total to date, for reference.</p>` : ""}
   </div>`;
 }

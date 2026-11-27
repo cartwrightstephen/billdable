@@ -18,6 +18,7 @@ import { shortPayCardHtml, owedText, emailFailed, sendsTo } from "./job.js";
 import { beforeYouSendHtml, supportingDocsHtml, missingDocsHtml, softChecksHtml, softWaiting } from "./paperwork.js";
 import { sendConfirmText } from "../payapp-text.js";
 import { complianceSendWarningHtml } from "./compliance.js";   // the soft gate: an expired COI the client needs (compliance stream)
+import { importedNoteHtml, storedBackupHtml, payappRetainageHtml } from "./job-payapp-core.js";
 
 export { sendConfirmText, deleteDraftText } from "../payapp-text.js";
 import { paymentsListHtml, qboPushHtml, qboStatus, loadQboStatus } from "./payments.js";
@@ -140,6 +141,7 @@ export function payappSummaryHtml(inv) {
     ${row("Contract sum to date", f.contract_to_date, " strong")}
     ${row("Completed and stored to date", f.completed)}
     ${row("Retainage held", f.retainage)}
+    ${f.retainage_stored ? row("&nbsp;&nbsp;on completed work", f.retainage_work, " sub-row") + row(`&nbsp;&nbsp;on stored materials (${money(f.stored)} stored)`, f.retainage_stored, " sub-row") : ""}
     ${row("Earned less retainage", f.earned)}
     ${row(termText("Less previous pay apps"), f.previous)}
     ${row("Current amount due", f.due, " strong payapp-due")}
@@ -279,9 +281,10 @@ export const views = {
       ${fromDaily ? `<p class="sov-daily payapp-daily">Updated from job records on ${fmtDate(fromDaily)}</p>` : ""}
       ${inv.status === "void" && inv.voided_reason ? `<p class="notice pulled-back">Pulled back ${fmtDate(inv.voided_at)}${inv.voided_by ? " by " + inv.voided_by : ""}: ${inv.voided_reason}. The client was told nothing is due on it.</p>` : ""}
       ${inv.final_override ? `<p class="override-note final-override">${finalOverrideText(inv.final_override)}</p>` : ""}
+      ${importedNoteHtml(inv)}
       <p><a class="btn secondary small" href="/api/jobs/${j.id}/payapp/${inv.id}.pdf" target="_blank" rel="noopener">Open the PDF</a></p>
-      ${QBO_READY.has(inv.status) ? qboPushHtml(j, inv) : ""}
-      ${QBO_READY.has(inv.status) ? `<p>${qboCsvLink(j.id, inv.id)} <span class="sub">A file to import in QuickBooks: Sales, Invoices, Import invoices.</span></p>` : ""}
+      ${QBO_READY.has(inv.status) && !inv.imported ? qboPushHtml(j, inv) : ""}
+      ${QBO_READY.has(inv.status) && !inv.imported ? `<p>${qboCsvLink(j.id, inv.id)} <span class="sub">A file to import in QuickBooks: Sales, Invoices, Import invoices.</span></p>` : ""}
       ${inv.status === "void" && currentDraft ? `<p class="notice"><a href="${pathFor("payapp-detail", j.id, currentDraft.id)}" data-action="open-payapp" data-job="${j.id}" data-inv="${currentDraft.id}">Go to the current draft, ${currentDraft.number}</a></p>` : ""}
       ${draft && formOpen.pencilreview === inv.id && inv.pencil_status !== "sent" ? pencilReviewHtml(j, inv, noEmail, locked) : ""}
       ${draft ? `<div class="card send-check">
@@ -298,6 +301,7 @@ export const views = {
         ${terms ? `<div class="money-row"><span class="label">Payment due</span><span>${fmtDate(dueIso)}, ${terms} days after it goes out</span></div>` : ""}
         <div class="money-row"><span class="label">Subject</span><span>${subjectPreview(j, inv)}</span></div>
         ${inv.final ? `<p class="sub final-note">${termText("The final pay app: the PDF is marked FINAL APPLICATION.")}</p>` : ""}
+        ${payappRetainageHtml(j, inv)}
         ${missingDocsHtml(j, inv)}
         ${softChecksHtml(j, inv)}
         ${beforeYouSendHtml(j, inv)}
@@ -310,6 +314,7 @@ export const views = {
         ${locked ? confirmFirstHtml(termText("the pay app")) : ""}
         ${may("send") ? `<button class="btn" data-action="send" data-id="${j.id}" data-reviewed="${(inv.email_preview || {}).stamp || ""}"${missing || softWaiting(inv) || (j.blockers || []).length || noEmail || locked || ((inv.approval || {}).waiting || []).length || (inv.approval || {}).blocked ? ' data-blocked="1"' : ""}>Approve & send to ${j.payer.ap_email || "the client"}</button>` : OWNER_SENDS}
       </div>` : ""}
+      ${storedBackupHtml(j, inv)}
       ${supportingDocsHtml(j, inv)}
       ${!draft ? `<div class="card">
         <h2>Payments received</h2>

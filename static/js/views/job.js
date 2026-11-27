@@ -18,6 +18,7 @@ import { sovCardHtml, progressDone } from "./job-sov.js";
 import { recordCardHtml } from "./job-record.js";
 import { moneyCardHtml } from "./job-money.js";
 import { playbookMissingHtml, jobPaperworkHtml } from "./job-paperwork.js";
+import { earlierCardHtml, earlierLinkHtml, lineRetainageHtml, releaseCardHtml } from "./job-payapp-core.js";
 
 // Notes typed with Progress Pay App or Final Pay App go on that pay app and its PDF (R4-12).
 const NOTES_HELP = "Printed under the lines on this pay app and its PDF, so the client sees it.";
@@ -303,6 +304,7 @@ export const views = {
       <h1>${termText("Progress pay app")}</h1>
       <p class="sub"><a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a>${p ? ` · pay period ${fmtDate(p.from)} to ${fmtDate(p.to)}` : ""}${j.payapp_due_on ? ` · due to ${j.payer.name} ${fmtDate(j.payapp_due_on)}` : ""}</p>`;
     if (j.work_status === "complete") return `${head}<p class="sub">The work is marked done: draft the final pay app from the job page.</p>`;
+    if (openDraft && openDraft.retainage_release) return `${head}<p class="sub">${openDraft.number} is a retainage release draft. Send or delete it, then record progress.</p>`;
     return `${head}
       ${sovForm ? sovProgressHtml(j, periodField("sovprogress", j), formErrorLine("sovprogress"),
         lump ? `<p class="form-inline"><button class="linkish" data-action="progress-dollars">Bill by dollars instead</button></p>` : "") : progressFormHtml(j, openDraft, lump)}`;
@@ -366,7 +368,7 @@ export const views = {
             ${ejf.period_end_day}
             ${assigneeField("editjob", "ej", j.assignee_id)}
           </div>
-          <p class="sub">${hasPayApps && !(j.sov_view && j.sov_view.contract_follows) ? "The contract amount is fixed once a pay app exists; use a change order. A new retainage applies from the next pay app; those sent keep theirs. " : ""}The client's type and where pay apps go: <button class="linkish" data-action="nav" data-view="playbook">Client playbook</button>.</p>
+          <p class="sub">${hasPayApps && !(j.sov_view && j.sov_view.contract_follows) ? "The contract amount is fixed once a pay app exists; use a change order. A new retainage applies from the next pay app; those sent keep theirs. " : ""}The client's type and where pay apps go: <button class="linkish" data-action="nav" data-view="playbook">Client playbook</button>. ${earlierLinkHtml(j)}</p>
           <div class="form-inline">
             <button class="btn" data-action="save-job" data-id="${j.id}">Save changes</button>
             ${j.can_delete && may("delete") ? `<button class="btn secondary danger-text" data-action="delete-job" data-id="${j.id}" data-name="${j.name}"${j.invoices.length ? ` data-drafts="${j.invoices.length}"` : ""}>Delete job</button>` : ""}
@@ -433,7 +435,10 @@ export const views = {
             </div>`).join("") : `<p class="sub">None.</p>`}
         </div>
       </div>
+      ${earlierCardHtml(j)}
+      ${releaseCardHtml(j)}
       ${sovCardHtml(j, foldOpen("job-sov"))}
+      ${lineRetainageHtml(j)}
       ${jobPaperworkHtml(j, foldOpen("job-docs"))}
       ${recordCardHtml(j, foldOpen("job-records"))}
       ${jobHistoryHtml(j)}

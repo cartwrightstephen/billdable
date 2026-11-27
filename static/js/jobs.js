@@ -465,6 +465,7 @@ export const ACTION_PERM = {
   close: "close_jobs", reopen: "close_jobs",
   done: "manage_jobs", "undo-done": "manage_jobs", edit: "manage_jobs", "approve-co": "manage_jobs", "withdraw-co": "manage_jobs", "include-co": "manage_jobs",
   "co-price": "manage_jobs", "payapp-approve": "approve_payapps",
+  "earlier-payapps": "manage_jobs", "earlier-payapps-remove": "manage_jobs", "line-retainage": "manage_jobs", "retainage-release": "ask_retainage",
 };
 
 // perms: {list: the signed-in person's permissions (me.perms)}; {owner: true} allows all.
@@ -653,7 +654,7 @@ export function shortPayAttrs(j, inv) {
 
 // A sent pay app can be pulled back (R4-03) while nothing is paid on it and nothing came after it.
 export function canPullBack(j, inv) {
-  if (j.closed || !["sent", "approved"].includes(inv.status)) return false;
+  if (j.closed || inv.imported || !["sent", "approved"].includes(inv.status)) return false;
   if ((j.payments || []).some(p => p.invoice_id === inv.id)) return false;
   const live = (j.invoices || []).filter(i => i.status !== "void");
   return live[live.length - 1] === inv;

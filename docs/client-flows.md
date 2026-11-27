@@ -175,6 +175,26 @@ Jobs saved before the address had four boxes keep their one line: Edit job shows
 - The supporting documents list for a new client is set by its Client type and is changed in the Client playbook, or for one job on the job page (section 15), not on the New job form.
 - Reading a contract is plain rules, not a reader of any layout: a scanned PDF, or a contract that words the sum or the parties unusually, leaves those boxes for you to fill.
 
+### 3a. A job that already has pay apps (started mid-project, Nov 27)
+
+**Goal:** take on a job part way through, with what was billed and paid before Duracash, so the next pay app has the right number and its "previous" column is right.
+
+```mermaid
+flowchart TD
+    A["New job: tick 'This job already has pay apps: enter them on the job page next', Save job; or Edit job: 'This job already has pay apps'"] --> B["Job page, card 'Earlier pay apps (before Duracash)'"]
+    B --> C{"How much detail?"}
+    C -->|"'Pay app by pay app'"| D["Pay app number, Period to, each line as 'Dollars' this period or '% complete' to date, Retainage held on it ($, blank: the job's and lines' percents), Amount paid, Date paid; 'Save pay app', then the next"]
+    C -->|"'Totals to date'"| E["Last pay app number, Period to, each line billed to date ($ or %), Retainage held to date, Total paid, Date paid; 'Save totals'"]
+    D --> F["Each earlier pay app is listed with what it billed and was paid; 'Add the old PDF' keeps the copy on the job records"]
+    E --> F
+    F --> G["'The next pay app here is PA-x-NN'. Progress pay app drafts it with the earlier work in Previous"]
+    F -.->|"Entered wrong, nothing made here yet"| H["'Take them off', confirm"]
+```
+
+Code: the card `earlierCardHtml`, static/js/views/job-payapp-core.js, and the link on Edit job `earlierLinkHtml`; the New job box `nj-earlier` in `create-job`, static/js/views/jobs.js. Server `import_earlier_payapps`, `remove_earlier_payapps` and `attach_history_file`, domain/payapp_core.py (routes `earlier-payapps`, `earlier-payapps-remove`, and `history=` on POST /api/import/file); both need **Change a job's contract, change orders and mark work done** (`manage_jobs`). Each earlier pay app is an ordinary pay app with `imported` set: its continuation sheet holds every line's total to date, so the next pay app's Previous column, the G702 summary and the job's money (billed, paid, outstanding, retainage held) read it like any other, and `_next_number` continues after the highest one. What was paid on it is a payment marked `imported`; one paid in full has its lien waivers taken as handled before (**Not needed**, with that reason), and on one paid in part only money recorded later owes a waiver. It is never emailed, pulled back or put in QuickBooks (`qbo_pushable`; the pay app's page says "Billed before Duracash"). They are entered while no pay app has been made in Duracash, in number order, and need the schedule of values first, which they then fix as a sent pay app would. A line can't go below what was billed before it or past its scheduled value; the amount paid can't be more than the pay app came to after retainage. **Take them off** keeps them on the job as void and puts the lines back where they stood.
+
+**Taps from start to done:** one box on New job; then per earlier pay app the boxes and **Save pay app**, or one **Save totals**.
+
 ---
 
 ## 4. The schedule of values
@@ -227,6 +247,11 @@ On a phone each line is a card with the description on top (R6-02).
 **Where it could still be simpler:**
 - A lump-sum line's % done takes one decimal; on a job with more than one line, a dollar figure that isn't a tenth of a percent is reached by changing the amount on the draft (a one-line job has Bill by dollars instead).
 - A mistake found after the first pay app is sent means a change order.
+
+**Stored materials (G703 column F, Nov 27).** The Progress pay app page has **Stored materials $** beside each line: materials on site and not yet installed. The continuation sheet then reads D (work completed from previous application), E (work this period), F (materials presently stored, not in D or E) and G = D + E + F, never more than the line's scheduled value; stored materials are billed when they arrive. When a later progress entry moves a line's quantity past where it stood when its materials were stored (`stored_qty_milli`), **Draft progress pay app** asks "Did this work install $X of them?" (`sovProgress`, static/js/views/job-sov.js); **Move to installed** lowers the stored figure by that much, so F goes down, E goes up and the materials aren't billed twice. A pay app that bills new stored materials gets the **Stored materials documents** item, covering those lines (`add_stored_item`, domain/payapp_core.py): a check (soft) by default, Required when the job sets it so (section 15). It is in only when each line has its supplier invoice, receipt or photo tied to it (`stored_backup_follows`); the pay app page's **Stored materials backup** card has **Take a photo** and **Choose file** on each line, which file a Stored materials record tied to that line and attach it. With none billed yet, the job's own Stored materials item asks "Any stored materials received this period to bill?": **Yes, enter them** opens the Progress pay app page at the first stored box, **None this period** answers it.
+
+**Retainage by line (Nov 27).** Under the schedule card, **Retainage by line** gives a line its own percent (blank: the job's), from the next pay app and on the open draft (`set_line_retainage`, `manage_jobs`). A draft's Review & send has **Retainage this period %**: one percent on everything that pay app bills, for this period only (`set_payapp_retainage`). The retainage is worked out per percent and rounded once per percent (`retainage_for`), so a job with one percent holds what it always did; the line reads "Less retainage 10%", or "Less retainage (10% and 5% by line)". The continuation sheet's retainage column uses each line's percent. On the summary, line 5 is split as on a G702: **a. On completed work** and **b. On stored materials** (each stored line's column F at its percent).
+
 
 ---
 
@@ -628,6 +653,9 @@ The request attaches the closeout list's files, or on a job from before the clos
 
 **Where it could still be simpler:**
 - The closeout documents hold back the ask for the money, not the Finish job warning: section 13.
+
+**Bill retainage release (Nov 27).** Retainage can also be billed as its own pay app, for a client that pays retainage on a pay application rather than on a letter. The job page's **Retainage held** card has **Bill retainage release**: **Amount ($), blank for all**, **When** (**Substantial completion** or **Final**) and **Period to**, then **Draft the release** (`releaseCardHtml`, static/js/views/job-payapp-core.js; server `draft_retainage_release`, domain/payapp_core.py; route `retainage-release`, permission **Ask for retainage**). It drafts a pay app with no new work: its one line is the retainage released, its continuation sheet shows every line at its total to date with nothing this period, and on the summary line 5 comes down by the release and line 8 is the release. **Final** needs the work finished (Final pay app) and billed, and the closeout documents in, as the request does, and the closeout files go with it; a final release of all that is held is the final pay app (FINAL APPLICATION), so its conditional waiver is the final one. It is reviewed, signed and sent like any pay app; once sent, what it bills is no longer held, and its payment is recorded with **Record a payment**, which brings its lien waiver due (section 11): unconditional final when nothing else is open. While it is a draft, nothing else is drafted (Progress pay app and Final pay app say to send or delete it), and **Ask for retainage** and **Record retainage paid** leave its amount out.
+
 
 ---
 
