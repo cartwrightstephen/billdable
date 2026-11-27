@@ -1035,5 +1035,5 @@ fieldset.co-items legend, fieldset.co-backup legend { color: var(--muted); font-
 /* A table as cards (phone and iPad portrait): a cell's link (the job, the pay app, "1 missing") is
    the card's way in, so it gets a finger's height rather than its line's 19 px (Nov 27 hunt). */
 @media (max-width: 800px) {
-  #view table.stack td > a { display: inline-flex; align-items: center; min-height: 44px; }
+  #view table.stack td > a, #view tr.action-item td > a { display: inline-flex; align-items: center; min-height: 44px; }
 }
