@@ -4775,18 +4775,20 @@ def main() -> None:
     if production() and os.environ.get("DURACASH_ALLOW_NO_OFFSITE") == "1":
         for problem in recovery_problems():
             log_json("warn", msg=f"Starting anyway (DURACASH_ALLOW_NO_OFFSITE=1): {problem}")
-    try:
-        backup_before_upgrade()
-    except Exception as exc:
-        log_json("error", msg=f"Refusing to start: the backup before the data upgrade failed ({exc.__class__.__name__}: {exc}). "
-                              "Free disk space, or restore, and deploy again.")
-        alerts.notify("backup:pre-upgrade", "the backup before a data upgrade failed; the server did not start")
-        sys.exit(1)
-    # One server per data directory (M7): a second copy started on the same disk is refused.
+    # One server per data directory (M7): a second copy started on the same disk is refused, before
+    # it backs anything up or writes the schema marker the running server's next start reads.
     try:
         storage.claim_data_dir("server")
     except storage.DataDirBusy as exc:
         log_json("error", msg=f"Refusing to start: {exc}")
+        sys.exit(1)
+    try:
+        backup_before_upgrade()
+    except Exception as exc:
+        storage.release_data_dir("server")
+        log_json("error", msg=f"Refusing to start: the backup before the data upgrade failed ({exc.__class__.__name__}: {exc}). "
+                              "Free disk space, or restore, and deploy again.")
+        alerts.notify("backup:pre-upgrade", "the backup before a data upgrade failed; the server did not start")
         sys.exit(1)
     auth.upgrade_file(migrations.AUTH_STEPS)
     if demo_enabled():
