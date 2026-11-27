@@ -128,21 +128,23 @@ Something is down, data looks wrong, or a leak is suspected.
    what stops it happening again. If customer data may have been exposed, ask the lawyer what
    notice the law and the Privacy Policy require before telling customers.
 
-## 6. QuickBooks Online (read-only)
+## 6. QuickBooks Online
 
 Once the Intuit Developer app exists (setup doc, section 1):
 
 1. In the Intuit app's settings, add the redirect URI `<DURACASH_URL>/api/qbo/callback`, for
    example `https://duracash.onrender.com/api/qbo/callback`, for both Development and Production.
-2. On Render, set `QBO_CLIENT_ID` and `QBO_CLIENT_SECRET` (the Development keys first) and keep
-   `QBO_ENV` unset: that is the sandbox.
+2. On Render, set `QBO_CLIENT_ID` and `QBO_CLIENT_SECRET` (the Development keys first) and
+   `QBO_ENVIRONMENT=sandbox`. Unset, a production server (`DURACASH_ENV=production`) uses live
+   QuickBooks, which development keys can't reach.
 3. An owner opens **Money → Payments → Connect QuickBooks**, signs in to Intuit and picks the
    sandbox company. **Read payments from QuickBooks** proposes matches; nothing is recorded until
    they are ticked. **Check against QuickBooks** lists pay apps missing from QuickBooks, totals
    that differ, and pay apps paid on one side only.
 4. Check the first sandbox read against what the sandbox shows. The endpoints and field names in
    `qbo.py` were written from Intuit's documentation and tested only against a stand-in.
-5. For real companies: Intuit's production keys (after their app review), `QBO_ENV=production`.
+5. For real companies: Intuit's production keys (after their app review), `QBO_ENVIRONMENT=production`.
+6. Sending pay apps and the daily payment sync: docs/setup-integrations.md, QuickBooks Online.
 
 Tokens are in `qbo_connections.json` in the data directory, and the backups hold it (R6-06): a
 restore keeps the connection. When a connection expires (Intuit's refresh tokens last about 100

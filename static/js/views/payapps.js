@@ -18,7 +18,7 @@ import { beforeYouSendHtml, supportingDocsHtml, missingDocsHtml } from "./paperw
 import { sendConfirmText } from "../payapp-text.js";
 
 export { sendConfirmText, deleteDraftText } from "../payapp-text.js";
-import { paymentsListHtml } from "./payments.js";
+import { paymentsListHtml, qboPushHtml, qboStatus, loadQboStatus } from "./payments.js";
 
 let payappFilter = "all";
 let payPreselectJob = null;
@@ -201,6 +201,7 @@ export const views = {
     const inv = j && (j.invoices.find(i => i.id === currentDetailId) || j.invoices[j.invoices.length - 1]);
     if (!j || !inv) return backButton("payapps", "Pay apps") + emptyState("Pay app not found", "The job may have been deleted.", `<button class="btn" data-action="nav" data-view="payapps">Go to Pay apps</button>`);
     const pays = j.payments.filter(p => p.invoice_id === inv.id);
+    if (!qboStatus && QBO_READY.has(inv.status)) loadQboStatus();   // for Send to QuickBooks
     const missing = (inv.packet || j.packet || []).filter(p => p.required && !p.present).length;
     const draft = ["draft", "awaiting_approval"].includes(inv.status);
     const currentDraft = j.invoices.find(i => ["draft", "awaiting_approval"].includes(i.status));
@@ -223,6 +224,7 @@ export const views = {
       ${inv.status === "void" && inv.voided_reason ? `<p class="notice pulled-back">Pulled back ${fmtDate(inv.voided_at)}${inv.voided_by ? " by " + inv.voided_by : ""}: ${inv.voided_reason}. The client was told nothing is due on it.</p>` : ""}
       ${inv.final_override ? `<p class="override-note final-override">${finalOverrideText(inv.final_override)}</p>` : ""}
       <p><a class="btn secondary small" href="/api/jobs/${j.id}/payapp/${inv.id}.pdf" target="_blank" rel="noopener">Open the PDF</a></p>
+      ${QBO_READY.has(inv.status) ? qboPushHtml(j, inv) : ""}
       ${QBO_READY.has(inv.status) ? `<p>${qboCsvLink(j.id, inv.id)} <span class="sub">A file to import in QuickBooks: Sales, Invoices, Import invoices.</span></p>` : ""}
       ${inv.status === "void" && currentDraft ? `<p class="notice"><a href="${pathFor("payapp-detail", j.id, currentDraft.id)}" data-action="open-payapp" data-job="${j.id}" data-inv="${currentDraft.id}">Go to the current draft, ${currentDraft.number}</a></p>` : ""}
       ${draft && formOpen.pencilreview === inv.id && inv.pencil_status !== "sent" ? pencilReviewHtml(j, inv, noEmail, locked) : ""}

@@ -15,10 +15,13 @@ import { termText } from "../terms.js";
 export let paymentImport = null;  // {rows, warnings} proposed from a QuickBooks CSV or the QuickBooks connection
 export let qboStatus = null;      // /api/qbo/status: configured, connected, environment (escaped)
 let qboReconcile = null;   // /api/qbo/reconcile: {rows, invoices}
+let qboItems = null;       // /api/qbo/items: {items, mapping} (escaped), while the items are being chosen
+let qboCustomers = null;   // /api/qbo/customers: {customers, suggest} (escaped), while clients are being linked
+let qboSynced = null;      // the last Sync now: {recorded, problems, checked} (escaped)
 const RECON_WORDS = { missing: "Not in QuickBooks", amount: "Amount differs", paid_in_qbo: "Paid in QuickBooks", open_in_qbo: "Open in QuickBooks" };
 
 // Signed out: the QuickBooks connection and the payments being imported are that company's.
-onSessionEnd(() => { paymentImport = null; qboStatus = null; qboReconcile = null; });
+onSessionEnd(() => { paymentImport = null; qboStatus = null; qboReconcile = null; qboItems = null; qboCustomers = null; qboSynced = null; });
 
 export async function loadQboStatus() {
   qboStatus = { loading: true };
@@ -30,7 +33,7 @@ export async function loadQboStatus() {
     if (!data) { qboStatus = null; return; }
     qboStatus = escDeep(data);
   } catch (_) { if (me === asked) qboStatus = null; setNetBanner(true); return; }
-  if (["import", "company"].includes(currentView)) render();
+  if (["import", "company", "payapp-detail"].includes(currentView)) render();
 }
 
 // A payments export chosen on Payments: a CSV is read here, an Excel file on the server (R5-04).
@@ -75,21 +78,88 @@ function qboPayAppCell(row, n) {
   return row.number ? `${row.number} · ${row.job}` : pill;
 }
 
-// The QuickBooks card, on Import and on Settings > Company (R4-11).
+// The QuickBooks card, on Import and on Settings > Company (R4-11): connect, Sync now, the items
+// pay apps go in on and the clients' QuickBooks customers (Nov 27).
 export function qboCardHtml(onImport) {
   const q = qboStatus;
   const owner = can("company");   // connect and disconnect need Edit company details and connections
   return !q || q.loading ? "" : `<div class="card"><h2>Connect QuickBooks</h2>${
       !q.configured ? `<p class="sub">The QuickBooks connection isn't available yet. Use the CSV import ${onImport ? "below" : "on Import"}.</p>`
       : !q.connected ? (owner
-        ? `<p class="sub">Read-only: Duracash reads payments and invoices from QuickBooks and never changes your books.</p><button class="btn" data-action="qbo-connect">Connect QuickBooks</button>`
+        ? `<p class="sub">Send pay apps to QuickBooks as invoices, and bring back the payments recorded there.</p><button class="btn" data-action="qbo-connect">Connect QuickBooks</button>`
         : `<p class="sub">An owner of this company can connect QuickBooks here.</p>`)
-      : `<p class="sub"><span class="pill green">Connected</span> ${q.environment === "sandbox" ? "Sandbox company. " : ""}Since ${fmtDate(q.connected_at)}${q.connected_by ? ", by " + q.connected_by : ""}. Read-only.</p>
-        <div class="form-inline"><button class="btn" data-action="qbo-sync">Read payments from QuickBooks</button><button class="btn secondary" data-action="qbo-reconcile">Check against QuickBooks</button>${owner ? `<button class="btn secondary" data-action="qbo-disconnect">Disconnect</button>` : ""}</div>
+      : `<p class="sub"><span class="pill green">Connected</span> ${q.environment === "sandbox" ? "Sandbox company. " : ""}Since ${fmtDate(q.connected_at)}${q.connected_by ? ", by " + q.connected_by : ""}.</p>
+        ${qboSettingsHtml()}
+        <div class="form-inline">${can("record_payments") ? `<button class="btn" data-action="qbo-sync-now">Sync now</button>` : ""}<button class="btn secondary" data-action="qbo-sync">Read payments from QuickBooks</button><button class="btn secondary" data-action="qbo-reconcile">Check against QuickBooks</button>${owner ? `<button class="btn secondary" data-action="qbo-disconnect">Disconnect</button>` : ""}</div>
         ${qboReconcile ? (qboReconcile.rows.length
           ? `<h3>Where Duracash and QuickBooks differ</h3>${qboReconcile.rows.map(r => `<div class="list-item"><span class="pill">${RECON_WORDS[r.kind] || words(r.kind)}</span> <a href="${pathFor("job", r.job_id)}" data-action="open-job" data-id="${r.job_id}">${r.job}</a>: ${r.detail}${r.kind === "missing" && r.invoice_id ? " " + qboCsvLink(r.job_id, r.invoice_id) : ""}</div>`).join("")}`
-          : `<p class="sub">Duracash and QuickBooks agree on every sent pay app (${qboReconcile.invoices} QuickBooks invoices checked).</p>`) : ""}`}
+          : `<p class="sub">Duracash and QuickBooks agree on every sent pay app (${qboReconcile.invoices} QuickBooks invoices checked).</p>`) : ""}
+        ${qboSynced ? qboSyncedHtml(qboSynced) : ""}`}
     </div>`;
+}
+
+// What Sync now did: payments recorded on pay apps sent to QuickBooks, and any it couldn't record.
+function qboSyncedHtml(r) {
+  const done = r.recorded.length
+    ? `<p class="sub">Recorded from QuickBooks: ${r.recorded.map(x => `${x.number} ${money(x.amount_cents)}`).join(", ")}.</p>`
+    : `<p class="sub">Nothing new from QuickBooks for the pay apps sent there.</p>`;
+  return done + r.problems.map(x => `<p class="form-error">${x.number}: ${x.error}</p>`).join("");
+}
+
+// The items pay apps go in on, and which QuickBooks customer each client is (qbo_sync.py). Only
+// someone with both Edit company details and connections and See company financials changes them.
+function qboSettingsHtml() {
+  const m = (state.company && state.company.qbo) || {};
+  const mayMap = can("company") && can("financials");
+  const chosen = m.billing_item
+    ? `Pay apps go in on <strong>${m.billing_item.name}</strong>${m.retainage_item ? `, retainage held on <strong>${m.retainage_item.name}</strong>` : ", with no retainage item chosen (a pay app holding retainage can't be sent)"}.`
+    : "Choose the QuickBooks item pay apps go in on before sending one.";
+  const items = qboItems ? `<div class="form-grid">
+      <label>Billing item (income)<select id="qbo-billing-item">${qboItems.items.map(i => `<option value="${i.id}"${m.billing_item && m.billing_item.id === i.id ? " selected" : ""}>${i.name}${i.account ? " · " + i.account : ""}</option>`).join("")}</select></label>
+      <label>Retainage item (Retainage Receivable)<select id="qbo-retainage-item"><option value="">None</option>${qboItems.items.map(i => `<option value="${i.id}"${m.retainage_item && m.retainage_item.id === i.id ? " selected" : ""}>${i.name}${i.account ? " · " + i.account : ""}</option>`).join("")}</select></label>
+    </div><div class="form-inline"><button class="btn small" data-action="qbo-save-items">Save items</button><button class="btn small secondary" data-action="qbo-items-cancel">Cancel</button></div>` : "";
+  const links = qboCustomers ? `<h3>Clients in QuickBooks</h3>${(state.payers || []).map(p => {
+      const linked = p.qbo_customer_id || qboCustomers.suggest[p.id] || "";
+      return `<div class="list-item"><label>${p.name} <select data-qbo-customer="${p.id}"><option value="">Not linked: found or made when a pay app is sent</option>${qboCustomers.customers.map(c => `<option value="${c.id}"${c.id === linked ? " selected" : ""}>${c.name}${c.email ? " · " + c.email : ""}</option>`).join("")}</select></label>
+        <button class="btn small secondary" data-action="qbo-link" data-id="${p.id}">${p.qbo_customer_id ? "Save link" : "Link"}</button></div>`;
+    }).join("")}<div class="form-inline"><button class="btn small secondary" data-action="qbo-customers-cancel">Done</button></div>` : "";
+  return `<p class="sub qbo-mapping">${chosen}</p>${mayMap ? (items || links ? items + links
+      : `<div class="form-inline"><button class="btn small secondary" data-action="qbo-items">Choose items</button><button class="btn small secondary" data-action="qbo-customers">Link clients</button></div>`) : ""}`;
+}
+
+// The pay app page's QuickBooks line (Nov 27): Send to QuickBooks, and where it went.
+export function qboPushHtml(j, inv) {
+  const q = qboStatus;
+  if (!q || !q.connected) return "";
+  const at = inv.qbo ? `<span class="sub">In QuickBooks as invoice ${inv.qbo.doc_number}, sent ${fmtDate(inv.qbo.pushed_at)}${inv.qbo.pushed_by ? " by " + inv.qbo.pushed_by : ""}.</span>` : "";
+  const button = can("financials") ? `<button class="btn secondary small" data-action="qbo-push" data-job="${j.id}" data-inv="${inv.id}">${inv.qbo ? "Send to QuickBooks again" : "Send to QuickBooks"}</button>` : "";
+  return button || at ? `<p class="qbo-push">${button} ${at}</p>` : "";
+}
+
+async function getQbo(path) {
+  try {
+    const res = await fetch(path);
+    const data = await readJson(res);
+    if (!res.ok) { toast(data.error || "Couldn't read QuickBooks."); return null; }
+    return escDeep(data);
+  } catch (_) { setNetBanner(true); return null; }
+}
+
+async function pushToQbo(el, overwrite) {
+  toast("Sending to QuickBooks…");
+  const r = await postJson("/api/qbo/push", { job_id: unesc(el.dataset.job), invoice_id: unesc(el.dataset.inv), overwrite });
+  if (!r.ok) {
+    if (r.data.qbo_code === "changed" && !overwrite) {
+      if (await askConfirm(r.data.error, "Replace it in QuickBooks")) await pushToQbo(el, true);
+      return;
+    }
+    toast(r.data.error || "It didn't go to QuickBooks.");
+    return;
+  }
+  setState(r.data);
+  const p = r.data.qbo_push;
+  toast(`In QuickBooks as invoice ${p.doc_number} (${p.action === "created" ? "new" : "updated"}).`);
+  render();
 }
 
 // Import's payments card (I1): paste or choose a QuickBooks payments export, then tick and record.
@@ -212,6 +282,36 @@ export const actions = {
       qboReconcile = escDeep(data);
     } catch (_) { setNetBanner(true); return; }
     render();
+  },
+  "qbo-push": (el) => pushToQbo(el, false),
+  "qbo-sync-now": async () => {
+    toast("Syncing with QuickBooks…");
+    const r = await postJson("/api/qbo/sync", {});
+    if (!r.ok) { toast(r.data.error || "Couldn't sync with QuickBooks."); return; }
+    setState(r.data);
+    qboSynced = escDeep(r.data.qbo_sync);
+    toast(qboSynced.recorded.length ? `Recorded ${qboSynced.recorded.length} payment${qboSynced.recorded.length === 1 ? "" : "s"} from QuickBooks.` : "Nothing new from QuickBooks.");
+    render();
+  },
+  "qbo-items": async () => { const d = await getQbo("/api/qbo/items"); if (d) { qboItems = d; render(); } },
+  "qbo-items-cancel": () => { qboItems = null; render(); },
+  "qbo-save-items": async () => {
+    const pick = (id) => {
+      const sel = document.getElementById(id);
+      const it = sel && qboItems.items.find(i => i.id === sel.value);
+      return it ? { id: unesc(it.id), name: unesc(it.name) } : null;
+    };
+    const r = await postJson("/api/qbo/settings", { billing_item: pick("qbo-billing-item"), retainage_item: pick("qbo-retainage-item") });
+    if (!r.ok) { toast(r.data.error || "The items weren't saved."); return; }
+    setState(r.data); qboItems = null; toast("QuickBooks items saved."); render();
+  },
+  "qbo-customers": async () => { const d = await getQbo("/api/qbo/customers"); if (d) { qboCustomers = d; render(); } },
+  "qbo-customers-cancel": () => { qboCustomers = null; render(); },
+  "qbo-link": async (el, id) => {
+    const sel = document.querySelector(`select[data-qbo-customer="${id}"]`);
+    const r = await postJson("/api/qbo/link", { payer_id: unesc(id), customer_id: sel ? unesc(sel.value) : "" });
+    if (!r.ok) { toast(r.data.error || "The link wasn't saved."); return; }
+    setState(r.data); toast(sel && sel.value ? "Linked." : "Unlinked."); render();
   },
   "qbo-disconnect": async () => {
     if (!(await askConfirm("Disconnect QuickBooks? Payments already recorded stay. An owner can connect it again any time.", "Disconnect"))) return;

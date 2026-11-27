@@ -58,6 +58,7 @@ import outbox
 import payapp_pdf
 import qbo
 import qbo_csv
+import qbo_sync
 import qty_import
 import qr
 import payer_page
@@ -556,6 +557,17 @@ class Site:
     @staticmethod
     def company_ids() -> list:
         return company_ids()
+
+    @staticmethod
+    def mutate(company_id: str, fn):
+        """A change from the background (the daily QuickBooks sync): fn(state) under the company's
+        lock, then saved. Returns what fn returned."""
+        with company_lock(company_id):
+            state = load_company(company_id)
+            out = fn(state)
+            domain.prune_assignments(state)
+            save_company(company_id, state)
+        return out
 
     @staticmethod
     def deleted() -> set:
@@ -1404,7 +1416,7 @@ class Handler(BaseHTTPRequestHandler):
         self._mutate(company_id, apply)
         self._json(200, {"received": True})
 
-    # ----- QuickBooks Online, read-only (qbo.py) -----
+    # ----- QuickBooks Online: the connection and reading payments (qbo.py) -----
 
     def _qbo_redirect_uri(self) -> str:
         return f"{app_url() or ''}/api/qbo/callback"
@@ -1427,7 +1439,7 @@ class Handler(BaseHTTPRequestHandler):
                     f'<p><a href="/money/payments">Back to Payments</a></p></main></body></html>')
             self._send(400, page.encode("utf-8"), "text/html; charset=utf-8")
             return
-        self._mutate(company_id, lambda st: domain.audit(st, "", "qbo_connected", "QuickBooks was connected (read-only).", "QuickBooks"))
+        self._mutate(company_id, lambda st: domain.audit(st, "", "qbo_connected", "QuickBooks was connected.", "QuickBooks"))
         self._send(303, b"", "text/plain", {"Location": "/money/payments"})
 
     def _g_qbo_reconcile(self, m, user) -> None:
@@ -1464,6 +1476,100 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, qbo.read_payments(ctx.company_id, state, days))
         except qbo.QboError as exc:
             self._json(409, {"error": str(exc)})
+
+    # ----- QuickBooks Online, writing and syncing (qbo_sync.py) -----
+
+    def _qbo_error(self, exc: Exception) -> None:
+        code = getattr(exc, "code", "")
+        self._json(409, {"error": str(exc), **({"qbo_code": code} if code else {})})
+
+    def _g_qbo_items(self, m, user) -> None:
+        state = company_state(user["company_id"])
+        try:
+            self._json(200, {"items": qbo_sync.items(user["company_id"]), "mapping": qbo_sync.mapping(state)})
+        except qbo.QboError as exc:
+            self._qbo_error(exc)
+
+    def _g_qbo_customers(self, m, user) -> None:
+        state = company_state(user["company_id"])
+        try:
+            rows = qbo_sync.customers(user["company_id"])
+        except qbo.QboError as exc:
+            self._qbo_error(exc)
+            return
+        self._json(200, {"customers": rows, "suggest": qbo_sync.suggest_links(state, rows)})
+
+    def _qbo_may_map(self, ctx: "Ctx") -> bool:
+        # Choosing items and linking clients changes what goes into the books: connections
+        # (the route's "company") and the company's financials both.
+        if has_perm(ctx.user, "financials"):
+            return True
+        self._json(403, {"error": NO_PERMISSION})
+        return False
+
+    def _p_qbo_settings(self, m, ctx: "Ctx") -> None:
+        if not self._qbo_may_map(ctx):
+            return
+        pick = lambda key: ctx.body.get(key) if isinstance(ctx.body.get(key), dict) else None
+        billing, retainage = pick("billing_item"), pick("retainage_item")
+        try:
+            known = {i["id"]: i for i in qbo_sync.items(ctx.company_id)}
+        except qbo.QboError as exc:
+            self._qbo_error(exc)
+            return
+        # The names kept are QuickBooks' own, not what the page sent.
+        billing = known.get(str((billing or {}).get("id") or ""))
+        retainage = known.get(str((retainage or {}).get("id") or "")) if retainage and retainage.get("id") else None
+        if pick("retainage_item") and pick("retainage_item").get("id") and not retainage:
+            self._json(409, {"error": "That retainage item isn't in QuickBooks any more. Load the items again."})
+            return
+        status, payload = self._mutate(ctx.company_id, lambda st: qbo_sync.save_mapping(st, billing, retainage, ctx.actor), ctx.user)
+        self._json(status, payload)
+
+    def _p_qbo_link(self, m, ctx: "Ctx") -> None:
+        if not self._qbo_may_map(ctx):
+            return
+        payer_id, customer_id = _text(ctx.body, "payer_id", limit=80), _text(ctx.body, "customer_id", limit=40)
+        customer = None
+        if customer_id:
+            try:
+                found = qbo_sync.call(ctx.company_id, "GET", f"customer/{quote(customer_id)}", what="the client").get("Customer") or {}
+            except qbo.QboError as exc:
+                self._qbo_error(exc)
+                return
+            customer = {"id": str(found.get("Id") or customer_id), "name": str(found.get("DisplayName") or "")}
+        status, payload = self._mutate(ctx.company_id, lambda st: qbo_sync.link_client(st, payer_id, customer, ctx.actor), ctx.user)
+        self._json(status, payload)
+
+    def _p_qbo_push(self, m, ctx: "Ctx") -> None:
+        job_id, invoice_id = _text(ctx.body, "job_id", limit=80), _text(ctx.body, "invoice_id", limit=80)
+        overwrite = ctx.body.get("overwrite") is True
+        # One send at a time per company, from reading the pay app to keeping QuickBooks' ids:
+        # two presses can't make two customers or two invoices.
+        with qbo_sync._push_lock(ctx.company_id):
+            state = company_state(ctx.company_id)
+            try:
+                result = qbo_sync.push(ctx.company_id, state, job_id, invoice_id, overwrite)
+            except domain.GateError as exc:
+                self._json(409, _gate(exc))
+                return
+            except qbo.QboError as exc:
+                self._qbo_error(exc)
+                return
+            kept = {}
+            status, payload = self._mutate(ctx.company_id, lambda st: kept.update(qbo_sync.apply_push(st, result, ctx.actor)), ctx.user)
+        self._json(status, {**payload, "qbo_push": {**kept, "action": result["action"], "customer": result["customer"]}} if status == 200 else payload)
+
+    def _p_qbo_sync(self, m, ctx: "Ctx") -> None:
+        state = company_state(ctx.company_id)
+        try:
+            payments = qbo_sync.fetch_payments(ctx.company_id, state)
+        except qbo.QboError as exc:
+            self._qbo_error(exc)
+            return
+        report = {"recorded": [], "problems": [], "checked": 0}
+        status, payload = self._mutate(ctx.company_id, lambda st: report.update(qbo_sync.apply_payments(st, payments, ctx.actor)), ctx.user)
+        self._json(status, {**payload, "qbo_sync": report} if status == 200 else payload)
 
     def _g_timeline(self, m, user) -> None:
         offset, limit, q = self._paging()
@@ -3171,6 +3277,8 @@ ROUTES = [
     Route("GET", r"/api/billing", "_g_billing", "user"),
     Route("GET", r"/api/qbo/reconcile", "_g_qbo_reconcile", "user"),
     Route("GET", r"/api/qbo/callback", "_g_qbo_callback"),
+    Route("GET", r"/api/qbo/items", "_g_qbo_items", "user", perm="financials"),
+    Route("GET", r"/api/qbo/customers", "_g_qbo_customers", "user", perm="financials"),
     Route("GET", r"/api/import/settings", "_g_import_settings", "user"),
     Route("GET", r"/api/files/([^/]+)", "_g_file", "user"),
     Route("GET", r"/api/jobs/([^/]+)/payapp/([^/]+)\.pdf", "_g_payapp_pdf", "user"),
@@ -3215,6 +3323,12 @@ ROUTES = [
     Route("POST", r"/api/billing/portal", "_p_billing_portal", "body", perm="billing"),
     Route("POST", r"/api/qbo/disconnect", "_p_qbo_disconnect", "body", perm="company"),
     Route("POST", r"/api/qbo/payments", "_p_qbo_payments", "body"),
+    # Sending pay apps to QuickBooks and what they go in on: the financials permission (qbo_sync.py);
+    # choosing items and linking clients also needs "company" (connections), checked in the handler.
+    Route("POST", r"/api/qbo/push", "_p_qbo_push", "body", perm="financials"),
+    Route("POST", r"/api/qbo/settings", "_p_qbo_settings", "body", perm="company"),
+    Route("POST", r"/api/qbo/link", "_p_qbo_link", "body", perm="company"),
+    Route("POST", r"/api/qbo/sync", "_p_qbo_sync", "body", perm="record_payments"),
     Route("POST", r"/api/onboarding/dismiss", "_p_onboarding_dismiss", "body"),
     Route("POST", r"/api/team/invite", "_p_team_invite", "body", perm="team"),
     Route("POST", r"/api/team/invites/([^/]+)/revoke", "_p_team_revoke", "body", perm="team"),

@@ -1,10 +1,12 @@
 """The server's background jobs: the hourly loop, the daily "due today" email, each person's
-reminders (reminders.py), and once a month the restore drill and last month's summary to each owner.
+reminders (reminders.py), the daily QuickBooks payment sync (qbo_sync.py), and once a month
+the restore drill and last month's summary to each owner.
 
 Moved out of server.py (R6-08). The server hands in `site`, looked up when called:
 company_ids(), read(company_id) (the company's state under its lock, or None when it is missing),
 deleted() (the deleted company ids), send(to, subject, body, company_id) (a system email; returns
-"sent" or why not), app_url(), and log(level, **fields).
+"sent" or why not), app_url(), log(level, **fields), and mutate(company_id, fn) (a change
+saved under the company's lock, for the QuickBooks sync).
 
 What these return goes to the server log, so it carries counts and company ids, never an
 email address (R6-09).
@@ -27,6 +29,7 @@ import domain
 from domain import profiles
 import mailer
 import metrics
+import qbo_sync
 import reminders
 import storage
 
@@ -233,7 +236,7 @@ def run_once(site, now: datetime | None = None) -> None:
     A failure is logged and alerted; the loop keeps going, and a failure in the monthly jobs
     doesn't stop the daily emails."""
     for key, what, job in (("monthly-jobs", "monthly jobs", run_monthly_jobs), ("daily-emails", "daily emails", send_daily_digests),
-                           ("reminders", "reminders", reminders.run)):
+                           ("reminders", "reminders", reminders.run), ("qbo-sync", "QuickBooks sync", qbo_sync.run_daily)):
         try:
             for line in job(site, now):
                 site.log("info", msg=line)

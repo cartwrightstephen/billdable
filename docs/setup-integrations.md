@@ -101,33 +101,79 @@ On staging and production, also check that with `TWILIO_AUTH_TOKEN` unset, an in
 
 ## QuickBooks Online
 
-Duracash only reads from QuickBooks. It never changes the books.
+Duracash sends sent pay apps to QuickBooks as invoices, and brings back the payments recorded there against them (`qbo_sync.py`). It also still reads payments to propose matches, checks pay apps against QuickBooks invoices, and offers the invoice CSV (`qbo.py`, `qbo_csv.py`).
 
-**Settings**
+**Settings (Render, Environment)**
 
 | Name | Where | What it is |
 |---|---|---|
-| `QBO_CLIENT_ID`, `QBO_CLIENT_SECRET` | staging, production | From the app's Keys page in the Intuit developer portal. Development and production keys are separate. |
-| `QBO_ENV` | staging: `sandbox`; production: `production` | Must match the keys. Default `sandbox`. |
-| `DURACASH_URL` | staging, production | Required: it makes the redirect URI. |
+| `QBO_CLIENT_ID`, `QBO_CLIENT_SECRET` | staging, production | From the app's Keys and credentials page at Intuit. Development keys work only with sandbox companies, production keys only with real ones. |
+| `QBO_ENVIRONMENT` | staging: `sandbox`; production: `sandbox` until the production keys arrive, then `production` | Must match the keys. Unset, it is `production` on a server with `DURACASH_ENV=production` and `sandbox` anywhere else, so **set it to `sandbox` on production while that server still has development keys**. `QBO_ENV`, its earlier name, is still read. |
+| `DURACASH_URL` | staging, production | Required: it makes the redirect URI (`<DURACASH_URL>/api/qbo/callback`). |
+| `QBO_API_BASE`, `QBO_TOKEN_URL`, `QBO_REVOKE_URL` | nowhere | Only for tests, which point them at a local stand-in. |
 
-**To register at Intuit**
+The daily payment sync runs from the same hourly loop as the daily email, about 5 minutes after start-up and then hourly, once a day per company.
 
-- Redirect URI: `https://<site>/api/qbo/callback`, exactly, once under Development for staging and once under Production for the live site. The two lists are separate.
-- Scope: `com.intuit.quickbooks.accounting`.
-- Production keys need Intuit's app assessment, plus public privacy policy and terms URLs. Allow time for that.
+**Set up the app at Intuit (once)**
 
-**Live test**
+1. Sign in at [developer.intuit.com](https://developer.intuit.com) with the Intuit account that will own the app (use a company address, not a personal one).
+2. Dashboard, **Create an app**, choose **QuickBooks Online and Payments**. Name it Duracash.
+3. Scope: tick **Accounting** only (`com.intuit.quickbooks.accounting`). Duracash doesn't use Payments, OpenID or profile scopes.
+4. Open the app, **Keys and credentials**, the **Development** section. Copy the Client ID and Client Secret into staging's `QBO_CLIENT_ID` and `QBO_CLIENT_SECRET`.
+5. In the same section, **Redirect URIs**, add exactly `https://<staging site>/api/qbo/callback` (for example `https://duracash-staging.onrender.com/api/qbo/callback`). No trailing slash. Save.
+6. Intuit makes a sandbox company with the developer account. Find it under **Sandbox** on the dashboard; add a second one there if you want a clean company for tests. It is US English, with sample customers and items.
+7. In the sandbox company (open it from the Sandbox page), set up the two items Duracash bills on:
+   - Chart of accounts, **New**: type **Other Current Assets**, name **Retainage Receivable**.
+   - Products and services, **New**, **Service**: name **Construction billing**, income account your construction income account (for example Construction Income or Services).
+   - Products and services, **New**, **Service**: name **Retainage**, income account **Retainage Receivable** (the asset account above, not income).
+   - If you number invoices yourself (Account and settings, Sales, **Custom transaction numbers** on), the QuickBooks invoice number is the pay app's number, such as `PA-OAK-02`.
+8. For the live site, when ready: the **Production** section of Keys and credentials asks for Intuit's app assessment (a questionnaire), the app's host domain, launch URL (`https://<site>/`), disconnect URL (`https://<site>/`), and public privacy policy and terms URLs (`https://<site>/privacy`, `https://<site>/terms`). Allow a few days. Then add `https://<site>/api/qbo/callback` under Production's Redirect URIs, put the production keys on the production service, and set `QBO_ENVIRONMENT=production`.
 
-1. On staging, with development keys and `QBO_ENV=sandbox`, sign in as an owner. On Payments, press Connect QuickBooks.
-2. Sign in to Intuit, pick the sandbox company and approve. You should come back to Payments, connected.
-3. In the sandbox company, make a customer, an invoice numbered like a sent pay app (say `PA-OAK-01`) and a payment on that invoice.
-4. Press Read payments from QuickBooks. The payment should match that pay app. Record it. Read again; it should say already recorded.
-5. Run the reconciliation. Change the invoice's amount in the sandbox and check that the difference shows.
-6. Wait over an hour, then read again, which proves the token refresh. Check that it stays connected the next day.
-7. Press Disconnect. Check the connection is gone from the company's Connected apps at Intuit.
-8. On a sent pay app, press Download for QuickBooks, and import the file at Sales, Invoices, Import in the sandbox.
-9. Repeat 1 to 4 on production with a real company before telling a client it works.
+**In Duracash, per company**
+
+1. An owner (Edit company details, client settings and connections) presses **Connect QuickBooks** on Settings, Company or Data, Import, and approves at Intuit.
+2. Someone with both that permission and **See company financials** presses **Choose items**: the billing item (Construction billing) and the retainage item (Retainage). A pay app holding retainage can't be sent until a retainage item is chosen.
+3. Optional: **Link clients** pairs each client with its QuickBooks customer. Clients left unlinked are matched when their first pay app is sent: by the same name, then the same email, and a new QuickBooks customer is made when neither is found.
+4. On a sent pay app, someone with **See company financials** presses **Send to QuickBooks**. Sending it again updates the same QuickBooks invoice. If the invoice was changed in QuickBooks since, Duracash asks before replacing it.
+5. Payments recorded in QuickBooks against those invoices are recorded here by **Sync now** (anyone with Record payments) and once a day on their own, through the same Record payment path and audit trail.
+
+**How a pay app goes into QuickBooks**
+
+- One QuickBooks invoice per pay app, numbered like it, dated the day it was sent, due when it is due, with a memo naming the job.
+- One invoice line per pay app line: the schedule-of-values progress this period, overhead and profit, and unsigned change orders billed with it, all on the billing item. Credit change orders have already lowered these lines, so nothing is subtracted separately. Mirroring the lines was chosen over one line per job because the pay app's lines are fixed when it is sent and already add up to its amount (Duracash refuses to send one that doesn't), and they all use one item, so nothing needs a QuickBooks item per schedule line.
+- Retainage withheld is one negative line on the retainage item. With that item pointed at Retainage Receivable (an Other Current Asset), the invoice total is what the client owes now, income counts the whole of the work billed, and the retainage waits on the balance sheet. This is the common way contractors book retainage in QuickBooks Online, which has no retainage feature of its own. A company on cash-basis books may point the retainage item at an income account instead; ask the company's bookkeeper.
+- When retainage is released, Duracash doesn't send that to QuickBooks yet: bill it there with a positive line on the same Retainage item, which moves it from Retainage Receivable to Accounts Receivable.
+- A pay app pulled back in Duracash after it was sent to QuickBooks is not voided there; void it in QuickBooks.
+- Sales tax isn't set on the invoice. A company whose QuickBooks adds sales tax automatically should check the first invoice.
+
+**Live test (sandbox)**
+
+1. On staging, with development keys and `QBO_ENVIRONMENT=sandbox`, sign in as an owner. Press Connect QuickBooks, sign in to Intuit, pick the sandbox company and approve. You should come back to Payments, connected.
+2. Choose items. The list should show the sandbox's Service and Non-inventory items.
+3. Link clients. A client named like a sandbox customer should be suggested.
+4. On a sent pay app with retainage, press Send to QuickBooks. In the sandbox, open the invoice: its lines, the negative retainage line and the total should match the pay app's PDF. Check Retainage Receivable on the balance sheet.
+5. Press Send to QuickBooks again: the same invoice, not a second one. Edit the invoice's amount in QuickBooks and send again: Duracash should ask before replacing it.
+6. In the sandbox, receive a payment against that invoice. Press Sync now: the pay app should read paid, with the payment in its history. Press Sync now again: nothing new.
+7. Make a client whose name is already a sandbox vendor, and send its pay app: the error should say the name is taken, in plain words.
+8. Leave it connected over a day: the next day's sync should run (server log: `QuickBooks sync`), which also proves the token refresh.
+9. The older steps still apply: Read payments from QuickBooks, Check against QuickBooks, Download for QuickBooks, Disconnect (and check Connected apps at Intuit).
+10. Repeat 1, 2, 4 and 6 on production with a real company before telling a client it works.
+
+**What was checked, Nov 27 2026 (qbo_sync.py)**
+
+| Item | Result | Source |
+|---|---|---|
+| Create and update address: `POST /v3/company/<realm>/invoice` (and `/customer`); an update carries `Id` and `SyncToken`; `GET /invoice/<id>` reads one | Matches | [python-quickbooks client](https://github.com/ej2/python-quickbooks/blob/master/quickbooks/client.py) (Intuit's reference pages don't render for the tools used) |
+| Invoice fields `CustomerRef`, `Line`, `DocNumber`, `TxnDate`, `DueDate`, `PrivateNote`, `CustomerMemo`, `TotalAmt`, `Balance`; line `DetailType` `SalesItemLineDetail` with `ItemRef`, `Qty`, `UnitPrice`, and `Amount`, `Description` | Match | [python-quickbooks: invoice](https://github.com/ej2/python-quickbooks/blob/master/quickbooks/objects/invoice.py), [detail lines](https://github.com/ej2/python-quickbooks/blob/master/quickbooks/objects/detailline.py), [Intuit Java SDK: SalesItemLineDetail](https://static.developer.intuit.com/sdkdocs/qbv3doc/ipp-v3-java-devkit-javadoc/com/intuit/ipp/data/SalesItemLineDetail.html) |
+| `sparse: true` on an update (other fields kept; the `Line` list sent replaces the invoice's lines) | Not confirmed from a readable source | Live test step 5 |
+| Errors come as `Fault.Error[]` with `Message`, `Detail`, `code`; 5010 stale SyncToken, 6240 duplicate name, 610 not found | Match | [python-quickbooks client](https://github.com/ej2/python-quickbooks/blob/master/quickbooks/client.py), [Intuit: handling common errors](https://developer.intuit.com/app/developer/qbo/docs/develop/troubleshooting/handling-common-errors) (title and codes from search results) |
+| Throttling: HTTP 429, 500 requests a minute and 10 a second per company; Intuit advises waiting before retrying | Matches; Duracash retries 429 and 5xx three times with growing waits (Retry-After when sent), at most a minute each | [Intuit: API call limits and throttles](https://developer.intuit.com/app/developer/qbo/docs/learn/limits-and-throttles) (from search results) |
+| `requestid` on writes: Intuit answers a repeated id with the first answer, so a retried create doesn't duplicate; at most 50 characters | Matches | [Intuit developer blog on requestid](https://blogs.a.intuit.com/2015/04/06/15346/) (from search results), [python-quickbooks client](https://github.com/ej2/python-quickbooks/blob/master/quickbooks/client.py) |
+| Apostrophes in a query value are escaped with a backslash | Matches | [Intuit: data queries](https://developer.intuit.com/app/developer/qbo/docs/learn/explore-the-quickbooks-online-api/data-queries) (from search results) |
+| A payment's link to an invoice: `Payment.Line[].LinkedTxn[]` with `TxnId` and `TxnType` `Invoice`, the line's `Amount` being what was applied | Matches (as checked Nov 3) | [Intuit: linked transactions](https://developer.intuit.com/app/developer/qbo/docs/workflows/manage-linked-transactions) |
+| Retainage as a negative line on an item tied to an Other Current Asset account | The usual QuickBooks Online practice, per Intuit's community answers and contractor guides | [QuickBooks community: contractor retention](https://quickbooks.intuit.com/learn-support/en-us/reports-and-accounting/contractor-retention/00/1065395), [Levelset: retainage receivable in QuickBooks](https://www.levelset.com/blog/recording-tracking-retainage-receivable-quickbooks-for-contractors/), [Sage: track retainage in QuickBooks Online](https://help.sagecm.intacct.com/Content/AccountingLink/CLQuickBooksOnline/QuickBooksOnlineSetup/QuickBooksOnlineDataSetup_RetainageItem.htm) |
+| A negative `UnitPrice` with `Qty` 1 on an invoice line through the API | Not confirmed (the QuickBooks screen allows it) | Live test step 4 |
+| Item `Type` values `Service` and `NonInventory`; `IncomeAccountRef`; Customer `DisplayName`, `PrimaryEmailAddr.Address`, `Active` | From memory and the libraries above, not a page read | Live test steps 2 and 3 |
 
 **What was checked, Nov 3 2026**
 
@@ -142,7 +188,7 @@ Duracash only reads from QuickBooks. It never changes the books.
 | Other Payment and Invoice field names | Match, from a widely used third-party library, as Intuit's reference pages couldn't be read by the tools used | [python-quickbooks: payment](https://github.com/ej2/python-quickbooks/blob/master/quickbooks/objects/payment.py), [invoice](https://github.com/ej2/python-quickbooks/blob/master/quickbooks/objects/invoice.py) |
 | Column names of the invoice import file | Not checked against a source | Test step 8 |
 
-The one code change: a 403 now tells the owner to check `QBO_ENV` against the keys, since mixing sandbox and live is the likely first mistake.
+The one code change then: a 403 tells the owner to check `QBO_ENV` (now `QBO_ENVIRONMENT`) against the keys, since mixing sandbox and live is the likely first mistake.
 
 The sample QuickBooks import on a job runs only on the demo company. The server refuses it for any other, and a test covers it.
 
