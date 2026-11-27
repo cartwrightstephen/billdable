@@ -26,6 +26,9 @@ import domain
 import storage
 
 ANCHORS_NAME = "audit_anchors.json"
+# The anchors file is read, changed and written by the daily check and by a reset (reanchor),
+# across processes too (audit_check.py run by hand while the server is up).
+ANCHORS_LOCK = storage.ProcessLock(lambda: Path(storage.DATA_DIR) / f".{ANCHORS_NAME}.lock")
 
 
 def anchors_path() -> Path:
@@ -64,16 +67,38 @@ def check_company(company_id: str, state: dict[str, Any], anchors: dict[str, Any
 
 def check_all(companies: Iterable[tuple[str, dict[str, Any] | None]], save: bool = True) -> list[tuple[str, dict[str, Any]]]:
     """(company id, result) for each (company id, state) given; a None state is skipped. The
-    anchors of the companies that passed are saved."""
-    anchors = _read_anchors()
+    anchors of the companies that passed are saved, unless a reset re-anchored one meanwhile."""
+    seen = _read_anchors()
+    anchors = json.loads(json.dumps(seen))
     out = []
     for company_id, state in companies:
         if state is None:
             continue
         out.append((company_id, check_company(company_id, state, anchors)))
     if save:
-        storage.write_json(anchors_path(), anchors)
+        with ANCHORS_LOCK:
+            now = _read_anchors()
+            for company_id, _ in out:
+                if company_id in anchors and now.get(company_id) == seen.get(company_id):
+                    now[company_id] = anchors[company_id]
+            storage.write_json(anchors_path(), now)
     return out
+
+
+def reanchor(company_id: str, state: dict[str, Any] | None) -> None:
+    """A company whose trail started again on purpose (Reset, which replaces the company): its
+    anchor is the new trail, so the next check doesn't take the shorter trail for a changed one.
+    With state None (a deleted company) the anchor goes."""
+    with ANCHORS_LOCK:
+        anchors = _read_anchors()
+        if state is None:
+            if anchors.pop(company_id, None) is None:
+                return
+        else:
+            rows = state.get("audit", [])
+            head = rows[-1].get("hash", "") if rows else ""
+            anchors[company_id] = {"rows": len(rows), "hash": head, "mac": _anchor_mac(company_id, len(rows), head)}
+        storage.write_json(anchors_path(), anchors)
 
 
 def run_daily(site, now=None, log: Callable[..., None] | None = None) -> list[str]:

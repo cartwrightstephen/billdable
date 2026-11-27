@@ -34,6 +34,7 @@ from html import escape as html_escape
 from urllib.parse import parse_qs, parse_qsl, quote, unquote, urlparse
 
 import alerts
+import audit_check
 import auth
 import backup
 import billing
@@ -616,6 +617,7 @@ def delete_company_data(company_id: str) -> int:
     reminders.forget_company(company_id)
     qbo.forget_company(company_id)   # its QuickBooks tokens too, revoked at Intuit (H4)
     docusign.forget_company(company_id)   # its DocuSign tokens and envelopes in flight (H4)
+    audit_check.reanchor(company_id, None)   # the audit check's anchor of its trail
     # Its Stripe billing record goes too (M5). A failure doesn't undo the deletion: it is alerted,
     # for a person to delete it in Stripe's dashboard.
     try:
@@ -1334,6 +1336,9 @@ class Handler(BaseHTTPRequestHandler):
                 state.update(fresh)
 
         status, payload = self._mutate(ctx.company_id, change, ctx.user)
+        if status == 200 and route.handler == "_m_reset":
+            # A reset starts the company's audit trail again: the daily check anchors the new one.
+            audit_check.reanchor(ctx.company_id, company_state(ctx.company_id))
         # What a handler adds to its answer (the payments import's row results) rides on the snapshot.
         self._json(status, {**payload, **ctx.reply} if status == 200 and ctx.reply else payload)
 
