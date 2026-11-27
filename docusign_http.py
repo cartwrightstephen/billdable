@@ -4,11 +4,13 @@ calls install(Handler, its module) once, which adds the handlers below to the re
 
 Routes:
 - GET  /api/docusign/status       what Settings and the Sign step show (no tokens)
-- POST /api/docusign/connect      an owner starts the OAuth sign-in (perm company)
+- POST /api/docusign/connect      an owner starts the OAuth sign-in (perm company); before the
+                                  server has its keys, a 200 {pending, message} and nothing else
 - GET  /api/docusign/callback     DocuSign sends the owner back here
 - POST /api/docusign/disconnect   (perm company)
 - POST /api/docusign/settings     {co_client_signs} (perm company)
-- POST /api/docusign/sign         {kind: payapp|waiver|co, job_id, ...}: the envelope and the signing page's address
+- POST /api/docusign/sign         {kind: payapp|waiver|co, job_id, ...}: the envelope and the signing page's address;
+                                  before the server has its keys, a 200 {pending, message}: nothing is signed
 - GET  /api/docusign/return       the signer comes back; one status read, then their page
 - POST /api/docusign/webhook      DocuSign Connect, HMAC checked
 - POST /api/docusign/check        {envelope_id}: one status read, at most every 15 minutes
@@ -73,7 +75,19 @@ def _g_docusign_status(self, m, user) -> None:
     self._json(200, docusign.status(user["company_id"]))
 
 
+def _pending(self, ctx, what: str) -> None:
+    """Not set up on this server yet: the friendly words, a 200, and nothing signed or connected.
+    The log line is how Duracash knows whom to email once DocuSign is switched on."""
+    demo = ctx.company_id == S.auth.DEMO_COMPANY_ID
+    if not demo:
+        S.log_json("info", msg="DocuSign asked for before it is switched on", company=ctx.company_id, asked=what)
+    self._json(200, {"pending": True, "message": docusign.pending_message(demo), **docusign.status(ctx.company_id)})
+
+
 def _p_docusign_connect(self, m, ctx) -> None:
+    if not docusign.configured():
+        _pending(self, ctx, "connect")
+        return
     if ctx.company_id == S.auth.DEMO_COMPANY_ID:
         self._json(409, {"error": "The demo account can't connect DocuSign."})
         return
@@ -168,6 +182,9 @@ def _envelope_for(state: dict, ctx, body: dict) -> dict[str, Any]:
 
 
 def _p_docusign_sign(self, m, ctx) -> None:
+    if not docusign.configured():
+        _pending(self, ctx, "sign")
+        return
     if ctx.company_id == S.auth.DEMO_COMPANY_ID or not docusign.connected(ctx.company_id):
         self._json(409, {"error": "DocuSign isn't connected for this company. Sign with your typed name, or ask an owner to connect it in Settings."})
         return

@@ -272,7 +272,9 @@ class DocusignHttp(ServerCase):
             res, st = self.request("GET", "/api/docusign/status", cookie=self.cookie)
             self.assertEqual((st["configured"], st["connected"]), (False, False))
             res, data = self.request("POST", "/api/docusign/connect", {}, cookie=self.cookie)
-            self.assertEqual(res.status, 409)
+            self.assertEqual(res.status, 200, "not an error before the keys are in (Nov 27)")
+            self.assertTrue(data["pending"])
+            self.assertNotIn("url", data)
         res, st = self.request("GET", "/api/docusign/status", cookie=self.cookie)
         self.assertEqual((st["configured"], st["connected"]), (True, False))
         job_id, inv = self.ready_payapp()
@@ -282,6 +284,40 @@ class DocusignHttp(ServerCase):
         self.assertIn("typed name", data["error"])
         res, out = self.request("POST", f"/api/jobs/{job_id}/payapp-approve",
                                 {"invoice_id": inv["id"], "stamp": inv["approval"]["stamp"], "signature": "Pat Pine"}, cookie=self.cookie)
+        self.assertEqual(res.status, 200, "the typed signature works as before")
+
+    def test_before_the_keys_are_in_connect_and_sign_say_so_and_sign_nothing(self):
+        """Founders' decision, Nov 27: DocuSign shows for everyone before the server has its keys.
+        Connect and Sign with DocuSign answer 200 with the friendly words; nothing is connected,
+        no envelope is made, nothing is marked signed, and the typed signature still works."""
+        job_id, inv = self.ready_payapp()
+        with mock.patch.dict(os.environ, {"DOCUSIGN_CLIENT_ID": "", "DOCUSIGN_CLIENT_SECRET": ""}):
+            res, data = self.request("POST", "/api/docusign/connect", {}, cookie=self.cookie)
+            self.assertEqual(res.status, 200, data)
+            self.assertEqual((data["pending"], data["configured"], data["connected"]), (True, False, False))
+            self.assertIn("being switched on", data["message"])
+            self.assertIn("typed name", data["message"])
+            self.assertNotIn("url", data)
+            for body in ({"kind": "payapp", "job_id": job_id, "invoice_id": inv["id"], "stamp": inv["approval"]["stamp"]},
+                         {"kind": "co", "job_id": job_id, "co_id": "co-x"},
+                         {"kind": "waiver", "job_id": job_id, "for_id": inv["id"], "which": "interim"}):
+                res, data = self.request("POST", "/api/docusign/sign", body, cookie=self.cookie)
+                self.assertEqual(res.status, 200, data)
+                self.assertTrue(data["pending"])
+                self.assertIn("legally binding", data["message"])
+                self.assertNotIn("url", data)
+                self.assertNotIn("envelope_id", data)
+        self.assertEqual(self.fake.calls, [], "DocuSign was never called")
+        self.assertEqual(docusign.envelopes(self.cid), [], "no envelope")
+        self.assertIsNone(docusign.connection(self.cid), "not connected")
+        audit = [a["action"] for a in self.stored()["audit"]]
+        self.assertNotIn("docusign_sent", audit)
+        self.assertNotIn("docusign_completed", audit)
+        _, data = self.request("GET", f"/api/jobs/{job_id}", cookie=self.cookie)
+        still = next(i for i in data["job"]["invoices"] if i["id"] == inv["id"])
+        self.assertEqual(still["status"], inv["status"], "the pay app isn't marked signed")
+        res, _ = self.request("POST", f"/api/jobs/{job_id}/payapp-approve",
+                              {"invoice_id": inv["id"], "stamp": inv["approval"]["stamp"], "signature": "Pat Pine"}, cookie=self.cookie)
         self.assertEqual(res.status, 200, "the typed signature works as before")
 
     def test_connect_with_userinfo_refresh_and_disconnect(self):
