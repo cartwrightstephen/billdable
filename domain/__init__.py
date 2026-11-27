@@ -331,6 +331,7 @@ GATES = {"hard": "Required (hard stop)", "soft": "Check (soft)"}
 SOFT_BY_DEFAULT = {"photo", "ticket", "time_sheet", "stored"}
 SOFT_ANSWERS = {"checked": "checked", "not_needed": "not needed this time"}
 OVERRIDE_PERM = "Only someone who can send pay apps can let a required document go without it."
+GATE_PERM = "Only someone who can send pay apps can make a required document a check."
 
 
 def gate_key(item: dict[str, Any]) -> str:
@@ -5304,12 +5305,19 @@ def _gate_rows(job: dict[str, Any], labels: list[str]) -> list[dict[str, str]]:
     return rows
 
 
-def set_job_paperwork(state: dict[str, Any], job_id: str, body: dict[str, Any], actor: str = "owner") -> dict[str, Any]:
+def set_job_paperwork(state: dict[str, Any], job_id: str, body: dict[str, Any], actor: str = "owner",
+                      may_override: bool = True) -> dict[str, Any]:
     """Change the paperwork this job needs: {packet: the list, no_paperwork: true for nothing, or
     use_client: true for the client's list again}. It applies from the next pay app and to a draft
-    that hasn't been sent; a sent pay app stays as it went (B9). Audited."""
+    that hasn't been sent; a sent pay app stays as it went (B9). Audited. may_override: whether this
+    person can let a hard stop go (send pay apps); without it a Required document can't be made a
+    Check, which would let the pay app go without it (Nov 27 hunt)."""
     job = _open_job(state, job_id)
     if "gates" in body:
+        if not may_override and isinstance(body.get("gates"), dict):
+            now = job.get("paperwork_gates") or {}
+            if any(v == "soft" and (now.get(k) or default_gate(k)) == "hard" for k, v in body["gates"].items() if isinstance(k, str)):
+                raise GateError(GATE_PERM, fields={"gates": GATE_PERM})
         _set_paperwork_gates(state, job, body.get("gates"), actor)
         if not any(k in body for k in ("packet", "no_paperwork", "use_client")):
             _refresh_draft_gate(job, state)
