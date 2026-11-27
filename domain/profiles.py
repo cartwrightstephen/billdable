@@ -169,6 +169,33 @@ def sensitive_file_ids(state: dict[str, Any]) -> set[str]:
     return out
 
 
+def hide_sensitive_text(payload: Any, state: dict[str, Any]) -> Any:
+    """`payload` (a page's data) without the text of a payroll, time sheet, waiver or contract
+    record or Inbox item: an uploaded .txt or .csv puts its contents there (a record's note, an
+    item's text), which is as private as the file (H2). For those without "sensitive_docs".
+    Returns a copy where something is hidden; what it shares with `payload` is left as it was."""
+    records = {str(r.get("id")) for job in state.get("jobs", []) for r in job.get("records", []) if _sensitive_record(r)}
+    items = {str(i.get("id")) for i in state.get("inbox", [])
+             if i.get("kind") in SENSITIVE_KINDS or i.get("filed_kind") in SENSITIVE_KINDS}
+    if not records and not items:
+        return payload
+
+    def walk(value: Any) -> Any:
+        if isinstance(value, list):
+            return [walk(v) for v in value]
+        if not isinstance(value, dict):
+            return value
+        out = {k: walk(v) for k, v in value.items()}
+        rid = str(value.get("id") or "")
+        if rid in records and out.get("note"):
+            out["note"], out["hidden"] = "", True
+        if rid in items and out.get("text"):
+            out["text"], out["hidden"] = "", True
+        return out
+
+    return walk(payload)
+
+
 def may_open_file(user: dict[str, Any], state: dict[str, Any], file_id: str) -> bool:
     """Whether this person may download this file (server.py's /api/files/<id>)."""
     return has_perm(user, "sensitive_docs", state) or file_id not in sensitive_file_ids(state)

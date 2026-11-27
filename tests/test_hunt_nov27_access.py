@@ -125,6 +125,32 @@ class SensitiveFilesStayClosedEverywhere(ServerCase):
         res, out = self.request("POST", "/api/import/payments-csv", {"file_id": file_id}, cookie=owner)
         self.assertEqual(res.status, 200, out)
 
+    def test_a_payroll_files_text_is_hidden_as_the_file_is(self):
+        owner, data = self.signup("payroll-text@pine.example")
+        company_id = data["user"]["company_id"]
+        res, snap = self.request("POST", "/api/jobs", JOB, cookie=owner)
+        job_id = snap["jobs"][0]["id"]
+        res, out = self.request("POST", f"/api/import/file?job={job_id}&file=1&kind=payroll", raw=b"Name,Total\nJo Welder,1234.56\n", cookie=owner,
+                                headers={"Content-Type": "text/csv", "X-Filename": "certified-payroll.csv"})
+        self.assertEqual(res.status, 200, out)
+        self.assertIn("Jo Welder", json.dumps(out), "the owner sees it")
+        res, out = self.request("POST", "/api/import/file", raw=b"Week of Nov 2: poured slab", cookie=owner,
+                                headers={"Content-Type": "text/plain", "X-Filename": "site-note.txt"})
+        auth.create_user("crew2@pine.example", PASSWORD, "Cy Crew", company_id, role="member")
+        crew = "duracash_session=" + auth.create_session(auth.user_by_email("crew2@pine.example"))
+        for path in ("/api/state", f"/api/jobs/{job_id}", "/api/inbox"):
+            res, out = self.request("GET", path, cookie=crew)
+            self.assertEqual(res.status, 200, path)
+            self.assertNotIn("Jo Welder", json.dumps(out), path)
+            if "inbox" in out or "entries" in out:
+                self.assertIn("poured slab", json.dumps(out), f"{path}: other uploads keep their text")
+        res, out = self.request("POST", "/api/import/file", raw=b"another note", cookie=crew,
+                                headers={"Content-Type": "text/plain", "X-Filename": "n.txt"})
+        self.assertEqual(res.status, 200, out)
+        self.assertNotIn("Jo Welder", json.dumps(out), "nor in the answer to a change")
+        res, out = self.request("GET", "/api/state", cookie=owner)
+        self.assertIn("Jo Welder", json.dumps(out), "the owner still does")
+
 
 if __name__ == "__main__":
     unittest.main()

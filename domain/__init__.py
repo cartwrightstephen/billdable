@@ -3266,6 +3266,8 @@ def light_snapshot(state: dict[str, Any], now: datetime | None = None, perms: li
     out["audit_chain"] = check_audit(state)
     out["trial"] = trial.status(state)
     out["totals"] = {**_totals(full), "closed_collected_cents": closed_collected}
+    if perms is not None and "sensitive_docs" not in perms:
+        out = profiles.hide_sensitive_text(out, state)   # payroll's text too (H2)
     return out
 
 

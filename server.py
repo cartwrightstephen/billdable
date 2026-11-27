@@ -1529,6 +1529,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(404, {"error": "Job not found."})
                 return
             view = domain.job_view(state, job)
+            if not has_perm(user, "sensitive_docs", state):
+                view = profiles.hide_sensitive_text(view, state)   # payroll's text too (H2)
         self._json(200, {"job": view})
 
     def _g_final_preview(self, m, user) -> None:
@@ -1633,6 +1635,8 @@ class Handler(BaseHTTPRequestHandler):
         with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
             page = domain.inbox_page(state, offset, limit, source, status, one("job"), sort)
+            if not has_perm(user, "sensitive_docs", state):
+                page = profiles.hide_sensitive_text(page, state)   # payroll's text too (H2)
         self._json(200, page)
 
     def _g_sent_payapps(self, m, user) -> None:
@@ -3006,7 +3010,7 @@ class Handler(BaseHTTPRequestHandler):
                     notes.append(domain.file_signed_co_copy(state, job_id, signed_co, filed["record_ids"][0], actor,
                                                             signer_name=(query.get("signer") or [""])[0], signed_on=(query.get("signed_on") or [""])[0]))
 
-        status, payload = self._mutate(company_id, add)
+        status, payload = self._mutate(company_id, add, user, deliver=False)   # the snapshot as this person may see it
         if status != 200:
             importer.discard(company_id, stored)
         if status == 200 and notes:
@@ -3349,7 +3353,7 @@ class Handler(BaseHTTPRequestHandler):
         morsel = jar.get(SHARE_COOKIE)
         return morsel.value if morsel else None
 
-    def _add_shared(self, company_id: str, parsed: dict) -> tuple:
+    def _add_shared(self, company_id: str, parsed: dict, user: dict | None = None) -> tuple:
         """Store what a phone shared and put it in the company's Inbox: one item per file, or one
         for the text alone. Returns (status, reply)."""
         stored, skipped = [], []
@@ -3368,7 +3372,7 @@ class Handler(BaseHTTPRequestHandler):
             if not stored and text:
                 importer.add_item(state, "paste", subject=parsed["title"], text=text)
 
-        status, payload = self._mutate(company_id, add)
+        status, payload = self._mutate(company_id, add, user, deliver=False)
         if status != 200:
             importer.discard(company_id, stored)
         return status, payload
@@ -3384,7 +3388,7 @@ class Handler(BaseHTTPRequestHandler):
             importer.drop_share(key)
             self._json(200, {"ok": True}, self._share_cookie(None))
             return
-        status, payload = self._add_shared(ctx.company_id, held)
+        status, payload = self._add_shared(ctx.company_id, held, ctx.user)
         if status == 200:
             importer.drop_share(key)
         self._json(status, payload, self._share_cookie(None) if status == 200 else None)
