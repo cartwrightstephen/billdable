@@ -346,6 +346,15 @@ def restore(path: str | Path) -> Path:
     # Which schema the data was last opened with (server.backup_before_upgrade) is no longer known:
     # the next start backs the restored data up again before it upgrades anything (H7).
     (data_dir / "schema_version.json").unlink(missing_ok=True)
+    # The audit check's anchors (audit_check.py) are of the trails before the restore: an older
+    # trail put back would read as one cut short. They go aside; the next check anchors afresh.
+    if (data_dir / "audit_anchors.json").exists():
+        shutil.move(str(data_dir / "audit_anchors.json"), str(aside / "audit_anchors.json"))
+    try:
+        import audit_check
+        audit_check.write_anchors({})   # an empty, signed file: not "missing", which is reported
+    except Exception as exc:  # no server key here: the next check after a start writes one
+        print(f"Note: the audit check's anchors weren't started afresh ({exc.__class__.__name__}).")
     return aside
 
 

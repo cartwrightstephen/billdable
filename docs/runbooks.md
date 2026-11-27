@@ -182,8 +182,13 @@ Something is down, data looks wrong, or a leak is suspected.
    (`audit-chain:<company>`). Rows since Nov 27 2026 are keyed with `DURACASH_SECRET_KEY`, so they
    can't be rebuilt without it; a signature on a change order or pay app approval that was changed
    breaks the chain at its row; and a trail shorter than, or different from, the last check's
-   anchor (`audit_anchors.json`) fails too. Don't "fix" a broken trail: keep the file as evidence
-   and restore the company from a backup made before the change.
+   anchor (`audit_anchors.json`) fails too. That file is signed as a whole: if a company's anchor
+   was taken out of it, or the file is missing after the check has run before, every company is
+   reported against "the audit check's anchors file". A reset re-anchors its own company and a
+   restore starts the file afresh, so neither is reported. Don't "fix" a broken trail: keep the
+   file as evidence and restore the company from a backup made before the change. Once the
+   anchors file itself has been looked into, `python3 audit_check.py --accept` keeps it aside and
+   anchors every trail as it is now.
 6. **Write it down** within two days: what happened, when, who was affected, what was done, and
    what stops it happening again. If customer data may have been exposed, ask the lawyer what
    notice the law and the Privacy Policy require before telling customers.

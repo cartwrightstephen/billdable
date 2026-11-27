@@ -509,6 +509,17 @@ class UpgradeBackupTests(unittest.TestCase):
         self.assertEqual(json.loads((self.root / server.SCHEMA_MARKER).read_text())["schema"], migrations.SCHEMA_VERSION + 1,
                          "the marker isn't moved back: the next newer deploy needs no second backup")
 
+    @unittest.skipIf(storage.fcntl is None, "flock is POSIX only")
+    def test_a_second_copy_is_refused_before_it_backs_up_or_marks_the_schema(self):  # Nov 27 hunt
+        auth.create_user("up@example.com", PASSWORD, "Pat", "co-up")
+        held = open(self.root / ".duracash-server.lock", "a+")   # another server holds the data directory
+        self.addCleanup(held.close)
+        storage.fcntl.flock(held.fileno(), storage.fcntl.LOCK_EX | storage.fcntl.LOCK_NB)
+        with mock.patch.object(backup, "make_backup") as make, mock.patch.dict(os.environ, {"DURACASH_ENV": ""}), self.assertRaises(SystemExit):
+            server.main()
+        make.assert_not_called()
+        self.assertFalse((self.root / server.SCHEMA_MARKER).exists(), "the running server's marker is left as it is")
+
     def test_a_failed_backup_stops_the_start(self):
         auth.create_user("up@example.com", PASSWORD, "Pat", "co-up")
         with mock.patch.object(backup, "make_backup", side_effect=OSError("disk full")), mock.patch.object(alerts, "notify"), \

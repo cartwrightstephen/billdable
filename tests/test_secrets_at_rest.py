@@ -14,6 +14,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
+from contextlib import redirect_stdout
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -523,9 +524,40 @@ class AuditAnchorTests(TempData):
         self.assertFalse(audit_check.check_all([("co-1", short)])[0][1]["ok"])
         self.assertTrue(audit_check.check_all([("co-1", state)])[0][1]["ok"], "the real trail still passes")
         anchors = json.loads(audit_check.anchors_path().read_text())
-        anchors["co-1"]["rows"] = 1
+        anchors["companies"]["co-1"]["rows"] = 1
         storage.write_json(audit_check.anchors_path(), anchors)
         self.assertIn("anchor", audit_check.check_all([("co-1", state)])[0][1]["broken_at"])
+
+    def test_taking_a_companys_anchor_out_is_caught(self):  # Nov 27 hunt
+        state, other = seed_state(), seed_state()
+        self.assertTrue(all(r["ok"] for _, r in audit_check.check_all([("co-1", state), ("co-2", other)])))
+        anchors = json.loads(audit_check.anchors_path().read_text())
+        del anchors["companies"]["co-1"]
+        storage.write_json(audit_check.anchors_path(), anchors)
+        results = dict(audit_check.check_all([("co-1", state), ("co-2", other)]))
+        self.assertFalse(results["co-1"]["ok"])
+        self.assertIn("anchors file", results["co-1"]["broken_at"])
+        self.assertFalse(dict(audit_check.check_all([("co-1", state)]))["co-1"]["ok"], "and stays reported: the file isn't rewritten")
+        # The whole file taken away is caught once the check has run before; a new server's first check isn't.
+        audit_check.anchors_path().unlink()
+        self.assertFalse(dict(audit_check.check_all([("co-1", state)], expect_file=True))["co-1"]["ok"])
+        self.assertTrue(dict(audit_check.check_all([("co-1", state)]))["co-1"]["ok"])
+        # After a person has looked: --accept anchors afresh.
+        broken = json.loads(audit_check.anchors_path().read_text())
+        broken["companies"] = {}
+        storage.write_json(audit_check.anchors_path(), broken)
+        self.assertFalse(dict(audit_check.check_all([("co-1", state)]))["co-1"]["ok"])
+        with redirect_stdout(io.StringIO()):
+            audit_check.main(["--accept"])
+        self.assertTrue(dict(audit_check.check_all([("co-1", state)]))["co-1"]["ok"])
+
+    def test_an_anchors_file_in_the_first_unsigned_form_is_read_and_signed(self):
+        state = seed_state()
+        audit_check.check_all([("co-1", state)])
+        signed = json.loads(audit_check.anchors_path().read_text())
+        storage.write_json(audit_check.anchors_path(), signed["companies"])   # as Nov 27's first version wrote it
+        self.assertTrue(dict(audit_check.check_all([("co-1", state)]))["co-1"]["ok"])
+        self.assertIn("mac", json.loads(audit_check.anchors_path().read_text()))
 
     def test_the_daily_check_alerts_once_a_day(self):
         good, bad = seed_state(), seed_state()

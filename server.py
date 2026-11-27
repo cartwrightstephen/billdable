@@ -34,6 +34,7 @@ from html import escape as html_escape
 from urllib.parse import parse_qs, parse_qsl, quote, unquote, urlparse
 
 import alerts
+import audit_check
 import auth
 import backup
 import billing
@@ -383,7 +384,9 @@ def log_json(level: str, **fields) -> None:
 
 
 _LIMITS: dict = {}
+_LIMIT_WINDOWS: dict = {}   # key -> its window in seconds, so a key past it can go
 _LIMITS_LOCK = threading.Lock()
+LIMIT_KEYS = 20_000         # past this many keys, the expired ones go, then the longest idle
 
 
 def trusted_proxy_hops() -> int:
@@ -419,14 +422,31 @@ def _within_limit(key: str, count: int, seconds: int) -> bool:
     """True, and counted, when fewer than `count` events happened for `key` in the last `seconds`."""
     now = time.monotonic()
     with _LIMITS_LOCK:
-        if len(_LIMITS) > 20_000:
-            _LIMITS.clear()
+        if len(_LIMITS) > LIMIT_KEYS:
+            _evict_limits(now)
+        _LIMIT_WINDOWS[key] = max(seconds, _LIMIT_WINDOWS.get(key, 0))
         recent = [t for t in _LIMITS.get(key, []) if now - t < seconds]
         if len(recent) >= count:
             _LIMITS[key] = recent
             return False
         _LIMITS[key] = recent + [now]
         return True
+
+
+def _evict_limits(now: float) -> None:
+    """Make room in the rate-limit table (under _LIMITS_LOCK) without forgetting the counts that
+    still matter: clearing it all would let anyone who can make enough keys (new addresses, say)
+    reset everyone's limits. Keys whose window has passed go first; if that isn't enough, those
+    idle the longest, down to nine tenths of the cap."""
+    longest = 24 * 3600
+    for key in [k for k, times in _LIMITS.items() if not times or now - times[-1] >= _LIMIT_WINDOWS.get(k, longest)]:
+        _LIMITS.pop(key, None)
+        _LIMIT_WINDOWS.pop(key, None)
+    extra = len(_LIMITS) - LIMIT_KEYS * 9 // 10
+    if extra > 0:
+        for key in sorted(_LIMITS, key=lambda k: _LIMITS[k][-1] if _LIMITS[k] else 0)[:extra]:
+            _LIMITS.pop(key, None)
+            _LIMIT_WINDOWS.pop(key, None)
 
 
 class BadRequest(Exception):
@@ -619,6 +639,7 @@ def delete_company_data(company_id: str) -> int:
     reminders.forget_company(company_id)
     qbo.forget_company(company_id)   # its QuickBooks tokens too, revoked at Intuit (H4)
     docusign.forget_company(company_id)   # its DocuSign tokens and envelopes in flight (H4)
+    audit_check.reanchor(company_id, None)   # the audit check's anchor of its trail
     # Its Stripe billing record goes too (M5). A failure doesn't undo the deletion: it is alerted,
     # for a person to delete it in Stripe's dashboard.
     try:
@@ -1337,6 +1358,9 @@ class Handler(BaseHTTPRequestHandler):
                 state.update(fresh)
 
         status, payload = self._mutate(ctx.company_id, change, ctx.user)
+        if status == 200 and route.handler == "_m_reset":
+            # A reset starts the company's audit trail again: the daily check anchors the new one.
+            audit_check.reanchor(ctx.company_id, company_state(ctx.company_id))
         # What a handler adds to its answer (the payments import's row results) rides on the snapshot.
         self._json(status, {**payload, **ctx.reply} if status == 200 and ctx.reply else payload)
 
@@ -1466,6 +1490,11 @@ class Handler(BaseHTTPRequestHandler):
         if not item or not item.get(secret):
             self._json(404, {"error": "There is no page for that yet. It is made when the email goes out."})
             return
+        if prefix == "p" and not has_perm(user, "sensitive_docs", state) \
+                and set(payer_page.file_ids(state, job, item)) & profiles.sensitive_file_ids(state):
+            # The client's page serves the files sent with it, a signed waiver or payroll among them (H2).
+            self._json(403, {"error": SENSITIVE_WORDS})
+            return
         self._send(303, b"", "text/plain", {"Location": f"/{prefix}/{user['company_id']}.{item[secret]}"})
 
     def _g_me(self, m) -> None:
@@ -1533,6 +1562,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(404, {"error": "Job not found."})
                 return
             view = domain.job_view(state, job)
+            if not has_perm(user, "sensitive_docs", state):
+                view = profiles.hide_sensitive_text(view, state)   # payroll's text too (H2)
         self._json(200, {"job": view})
 
     def _g_final_preview(self, m, user) -> None:
@@ -1619,6 +1650,8 @@ class Handler(BaseHTTPRequestHandler):
             page = domain.page(rows, offset, limit, (q.get("job") or [""])[0])
             if key == "email_log":
                 domain.mark_moot(state, page["entries"])
+                if not has_perm(user, "sensitive_docs", state):
+                    page = profiles.hide_sensitive_text(page, state)   # the client pages' addresses (H2)
         self._json(200, page)
 
     # ----- Communications and Import/Export (the comms-data stream) -----
@@ -1637,6 +1670,8 @@ class Handler(BaseHTTPRequestHandler):
         with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
             page = domain.inbox_page(state, offset, limit, source, status, one("job"), sort)
+            if not has_perm(user, "sensitive_docs", state):
+                page = profiles.hide_sensitive_text(page, state)   # payroll's text too (H2)
         self._json(200, page)
 
     def _g_sent_payapps(self, m, user) -> None:
@@ -2433,6 +2468,9 @@ class Handler(BaseHTTPRequestHandler):
             meta = next((f for f in state.get("files", []) if f["id"] == file_id), None)
             if not meta or meta["ext"] not in {".csv", ".xlsx", ".txt"}:
                 raise domain.GateError("That file isn't a payments export.")
+            if not profiles.may_open_file(ctx.user, state, file_id):   # a payroll or time sheet file is read only by those who may open it (H2)
+                self._json(403, {"error": SENSITIVE_WORDS})
+                return
             try:
                 text = qbo_csv.text_of(meta["ext"], importer.file_path(ctx.company_id, meta).read_bytes())
             except OSError:
@@ -2726,7 +2764,10 @@ class Handler(BaseHTTPRequestHandler):
             if not _within_limit(f"invite:{company_id}", 20, 24 * 3600):
                 raise auth.AuthError("20 invites a day is the limit. Try again tomorrow.")
             raw, invite = auth.create_invite(company_id, ctx.body.get("email"), ctx.body.get("profile_id") or ctx.body.get("role") or "member",
-                                             user["name"], actor_id=user["id"], **self._team_rules(company_id))
+                                             user["name"], actor_id=user["id"], **self._team_rules(company_id),
+                                             grantable=profiles.grantable(user, company_state(company_id)),
+                                             uniform=self._uniform_signup())
+            existing = invite.pop("existing_account", False)
             invite["profile_name"] = profiles.profile_name(company_state(company_id), invite["profile_id"])
             url = app_url()
             note = {"invite_path": f"/#invite={raw}", "invite_link": f"{url}/#invite={raw}" if url else None, "emailed": False,
@@ -2736,9 +2777,17 @@ class Handler(BaseHTTPRequestHandler):
             if url:
                 with company_lock(company_id):
                     company_name = load_company(company_id).get("company", {}).get("name", "")
-                subject, text = mailer.invite_email(user["name"], user["email"], company_name, invite["profile_name"], f"{url}/#invite={raw}")
+                if existing:
+                    # An address with an account elsewhere (only on a server that sends mail): it is
+                    # told what to do instead, and the inviter sees what any invite shows.
+                    subject, text = mailer.invite_existing_email(user["name"], user["email"], company_name, f"{url}/")
+                else:
+                    subject, text = mailer.invite_email(user["name"], user["email"], company_name, invite["profile_name"], f"{url}/#invite={raw}")
                 status = self._system_email(invite["email"], subject, text, company_id=company_id)
                 note.update({"emailed": status == "sent", "email_status": status})
+                if status == "sent":
+                    # Emailed: the link is the invitee's, not the inviter's to try out (L3).
+                    note.update({"invite_path": None, "invite_link": None})
             return f"{user['name']} invited {invite['email']} as {invite['profile_name']}.", note
 
         self._team_change(ctx, invite)
@@ -2753,7 +2802,8 @@ class Handler(BaseHTTPRequestHandler):
     def _p_team_role(self, m, ctx: "Ctx") -> None:
         def role(user: dict) -> tuple:
             rules = self._team_rules(user["company_id"])
-            changed = auth.set_role(user["company_id"], m.group(1), ctx.body.get("profile_id") or ctx.body.get("role"), actor_id=user["id"], **rules)
+            changed = auth.set_role(user["company_id"], m.group(1), ctx.body.get("profile_id") or ctx.body.get("role"), actor_id=user["id"], **rules,
+                                    grantable=profiles.grantable(user, company_state(user["company_id"])))
             name = profiles.profile_name(company_state(user["company_id"]), changed["profile_id"])
             return f"{user['name']} gave {changed['name']} the {name} profile.", None
 
@@ -3005,7 +3055,7 @@ class Handler(BaseHTTPRequestHandler):
                     notes.append(domain.file_signed_co_copy(state, job_id, signed_co, filed["record_ids"][0], actor,
                                                             signer_name=(query.get("signer") or [""])[0], signed_on=(query.get("signed_on") or [""])[0]))
 
-        status, payload = self._mutate(company_id, add)
+        status, payload = self._mutate(company_id, add, user, deliver=False)   # the snapshot as this person may see it
         if status != 200:
             importer.discard(company_id, stored)
         if status == 200 and notes:
@@ -3348,7 +3398,7 @@ class Handler(BaseHTTPRequestHandler):
         morsel = jar.get(SHARE_COOKIE)
         return morsel.value if morsel else None
 
-    def _add_shared(self, company_id: str, parsed: dict) -> tuple:
+    def _add_shared(self, company_id: str, parsed: dict, user: dict | None = None) -> tuple:
         """Store what a phone shared and put it in the company's Inbox: one item per file, or one
         for the text alone. Returns (status, reply)."""
         stored, skipped = [], []
@@ -3367,7 +3417,7 @@ class Handler(BaseHTTPRequestHandler):
             if not stored and text:
                 importer.add_item(state, "paste", subject=parsed["title"], text=text)
 
-        status, payload = self._mutate(company_id, add)
+        status, payload = self._mutate(company_id, add, user, deliver=False)
         if status != 200:
             importer.discard(company_id, stored)
         return status, payload
@@ -3383,7 +3433,7 @@ class Handler(BaseHTTPRequestHandler):
             importer.drop_share(key)
             self._json(200, {"ok": True}, self._share_cookie(None))
             return
-        status, payload = self._add_shared(ctx.company_id, held)
+        status, payload = self._add_shared(ctx.company_id, held, ctx.user)
         if status == 200:
             importer.drop_share(key)
         self._json(status, payload, self._share_cookie(None) if status == 200 else None)
@@ -3792,6 +3842,8 @@ class Handler(BaseHTTPRequestHandler):
         """A document's file as the raw body, its name in X-Filename (as the job record's uploads).
         Written before the lock, as the Inbox's uploads; deleted again if the change is refused."""
         filename = unquote(self.headers.get("X-Filename", "") or "upload")
+        if self._upload_refused(user):   # the hourly upload limits, as every stored upload (H5)
+            return
         data = self._read_raw(importer.MAX_FILE_BYTES)
         user = self._session_user()
         if not user:
@@ -3851,6 +3903,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(404, {"error": "Not found"})
             return
         filename = unquote(self.headers.get("X-Filename", "") or "form.pdf")
+        if self._upload_refused(user):   # the hourly upload limits, as every stored upload (H5)
+            return
         data = self._read_raw(importer.MAX_FILE_BYTES)
         user = self._session_user()   # still signed in, and still allowed, now the upload is here?
         if not user:
@@ -4780,18 +4834,20 @@ def main() -> None:
             log_json("warn", msg=f"Starting anyway (DURACASH_ALLOW_NO_OFFSITE=1): {problem}")
     for warning in startup_warnings():
         log_json("warn", msg=warning)
-    try:
-        backup_before_upgrade()
-    except Exception as exc:
-        log_json("error", msg=f"Refusing to start: the backup before the data upgrade failed ({exc.__class__.__name__}: {exc}). "
-                              "Free disk space, or restore, and deploy again.")
-        alerts.notify("backup:pre-upgrade", "the backup before a data upgrade failed; the server did not start")
-        sys.exit(1)
-    # One server per data directory (M7): a second copy started on the same disk is refused.
+    # One server per data directory (M7): a second copy started on the same disk is refused, before
+    # it backs anything up or writes the schema marker the running server's next start reads.
     try:
         storage.claim_data_dir("server")
     except storage.DataDirBusy as exc:
         log_json("error", msg=f"Refusing to start: {exc}")
+        sys.exit(1)
+    try:
+        backup_before_upgrade()
+    except Exception as exc:
+        storage.release_data_dir("server")
+        log_json("error", msg=f"Refusing to start: the backup before the data upgrade failed ({exc.__class__.__name__}: {exc}). "
+                              "Free disk space, or restore, and deploy again.")
+        alerts.notify("backup:pre-upgrade", "the backup before a data upgrade failed; the server did not start")
         sys.exit(1)
     auth.upgrade_file(migrations.AUTH_STEPS)
     if demo_enabled():

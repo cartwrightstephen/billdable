@@ -320,6 +320,21 @@ class DocusignHttp(ServerCase):
                               {"invoice_id": inv["id"], "stamp": inv["approval"]["stamp"], "signature": "Pat Pine"}, cookie=self.cookie)
         self.assertEqual(res.status, 200, "the typed signature works as before")
 
+    def test_the_callback_finishes_only_for_the_owner_who_pressed_connect(self):  # Nov 27 hunt, as QuickBooks'
+        victim, _ = self.signup("ds-victim@sign.example", "Victim Co")
+        state = self.connect()
+        res, page = self.request("GET", f"/api/docusign/callback?code=good-code&state={state}", cookie=victim)
+        self.assertEqual(res.status, 400, page)
+        self.assertIsNone(docusign.connection(self.cid))
+        state = self.connect()
+        res, page = self.request("GET", f"/api/docusign/callback?code=good-code&state={state}")
+        self.assertEqual(res.status, 400, "no session")
+        self.assertIsNone(docusign.connection(self.cid))
+        state = self.connect()
+        res, _ = self.request("GET", f"/api/docusign/callback?code=good-code&state={state}", cookie=self.cookie)
+        self.assertEqual(res.status, 303)
+        self.assertIsNotNone(docusign.connection(self.cid))
+
     def test_connect_with_userinfo_refresh_and_disconnect(self):
         state = self.connect()
         res, page = self.request("GET", f"/api/docusign/callback?code=good-code&state={state}", cookie=self.cookie)

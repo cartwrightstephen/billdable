@@ -2824,6 +2824,7 @@ def hide_link_secrets(job: dict[str, Any]) -> dict[str, Any]:
 
 
 LINK_IN_TEXT = re.compile(r"/([ps])/[a-z0-9-]+\.[A-Za-z0-9_-]{20,64}")
+CLIENT_PAGE_IN_TEXT = re.compile(r"/p/[a-z0-9-]+\.[A-Za-z0-9_-]{20,64}")
 
 
 def without_link_secrets(state: dict[str, Any]) -> dict[str, Any]:
@@ -3281,6 +3282,8 @@ def light_snapshot(state: dict[str, Any], now: datetime | None = None, perms: li
     out["audit_chain"] = check_audit(state)
     out["trial"] = trial.status(state)
     out["totals"] = {**_totals(full), "closed_collected_cents": closed_collected}
+    if perms is not None and "sensitive_docs" not in perms:
+        out = profiles.hide_sensitive_text(out, state)   # payroll's text too (H2)
     return out
 
 

@@ -173,6 +173,37 @@ def sensitive_file_ids(state: dict[str, Any]) -> set[str]:
     return out
 
 
+def hide_sensitive_text(payload: Any, state: dict[str, Any]) -> Any:
+    """`payload` (a page's data) as someone without "sensitive_docs" may see it (H2):
+    - without the text of a payroll, time sheet, waiver or contract record or Inbox item: an
+      uploaded .txt or .csv puts its contents there (a record's note, an item's text);
+    - with the client pages' addresses (/p/...) cut from the emails' copies (the Outbox): a
+      client's page serves the files sent with the pay app, signed waivers and certified payroll
+      among them, to whoever holds the address.
+    Returns a copy where something is hidden; what it shares with `payload` is left as it was."""
+    import domain
+    records = {str(r.get("id")) for job in state.get("jobs", []) for r in job.get("records", []) if _sensitive_record(r)}
+    items = {str(i.get("id")) for i in state.get("inbox", [])
+             if i.get("kind") in SENSITIVE_KINDS or i.get("filed_kind") in SENSITIVE_KINDS}
+
+    def walk(value: Any) -> Any:
+        if isinstance(value, list):
+            return [walk(v) for v in value]
+        if not isinstance(value, dict):
+            return value
+        out = {k: walk(v) for k, v in value.items()}
+        if isinstance(out.get("body"), str) and "/p/" in out["body"]:
+            out["body"] = domain.CLIENT_PAGE_IN_TEXT.sub("/p/[link]", out["body"])
+        rid = str(value.get("id") or "")
+        if rid in records and out.get("note"):
+            out["note"], out["hidden"] = "", True
+        if rid in items and out.get("text"):
+            out["text"], out["hidden"] = "", True
+        return out
+
+    return walk(payload)
+
+
 def may_open_file(user: dict[str, Any], state: dict[str, Any], file_id: str) -> bool:
     """Whether this person may download this file (server.py's /api/files/<id>)."""
     return has_perm(user, "sensitive_docs", state) or file_id not in sensitive_file_ids(state)
@@ -255,6 +286,17 @@ def may_take(user: dict[str, Any], action: str, state: dict[str, Any]) -> bool:
     """Whether this person may take this job action (mirrored by mayTake in static/js/jobs.js)."""
     need = JOB_ACTION_PERMS.get(action)
     return need is None or has_perm(user, need, state) or (action in JOB_ACTION_ALSO and has_perm(user, JOB_ACTION_ALSO[action], state))
+
+
+def grantable(user: dict[str, Any], state: dict[str, Any]) -> set[str]:
+    """The profiles this person may give someone (an invite, a change of profile): every one for
+    an Owner; for anyone else who manages the team, Member (the company's starting profile, as
+    an owner set it) and those that can do nothing they can't, so holding "team" doesn't lead to
+    a Co-owner profile for themselves or anyone else (A4)."""
+    if user_profile_id(user) == OWNER:
+        return set(profile_ids(state))
+    mine = set(perms_of(user, state))
+    return {p["id"] for p in profiles(state) if p["id"] == MEMBER or (p["id"] != OWNER and set(p["perms"]) <= mine)}
 
 
 def holders(state: dict[str, Any], perm: str) -> set[str]:

@@ -118,8 +118,8 @@ function teamCardHtml() {
           ${field({ form: "invite", name: "profile_id", id: "invite-role", label: "Profile", value: "member", options: ((teamData && teamData.profiles) || [{ id: "member", name: "Member" }]).filter(p => ownerMe() || p.id !== "owner").map(p => [unesc(p.id), unesc(p.name)]) })}
           <button class="btn small" data-action="team-invite"${locked ? " disabled" : ""}>Invite</button>
         </div></div>
-        ${lastInvite ? `<div class="invite-result">${lastInvite.emailed ? `Invite emailed to ${esc(lastInvite.email)}.` : `Not emailed (${esc(lastInvite.email_status)}). Send them this link yourself; it works once, for 7 days:`}
-          <div class="copy-row"><code id="invite-link">${esc(lastInvite.link)}</code><button class="btn small secondary" data-action="copy" data-target="invite-link">Copy</button></div></div>` : ""}
+        ${lastInvite ? `<div class="invite-result">${lastInvite.emailed ? `Invite sent to ${esc(lastInvite.email)}.` : `Not emailed (${esc(lastInvite.email_status)}). Send them this link yourself; it works once, for 7 days:
+          <div class="copy-row"><code id="invite-link">${esc(lastInvite.link)}</code><button class="btn small secondary" data-action="copy" data-target="invite-link">Copy</button></div>`}</div>` : ""}
         ${invites.length ? `<h3>Open invites</h3>${invites.map(i => `<div class="list-item">${i.email} · ${i.profile_name || i.role} · invited by ${i.invited_by} · expires ${fmtDate(i.expires_at)}
           <button class="btn small secondary" data-action="team-revoke" data-invite="${i.id}">Revoke</button></div>`).join("")}` : ""}` : ""}`;
 }
@@ -793,7 +793,7 @@ export const actions = {
     const data = r.data;
     if (data.users) setTeamData(escDeep(teamOnly(data)));
     clearForm("invite");
-    lastInvite = { link: data.invite_link || (location.origin + data.invite_path), emailed: data.emailed, email_status: data.email_status, email: v.email };
+    lastInvite = { link: data.invite_link || (data.invite_path ? location.origin + data.invite_path : ""), emailed: data.emailed, email_status: data.email_status, email: v.email };
     render();
   },
   "team-profile": async (el) => {

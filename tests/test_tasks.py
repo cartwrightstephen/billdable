@@ -1,6 +1,7 @@
 """The To do list (G5, T3): ball in court, assignees and due dates on the rows the jobs make, tasks
 added by hand, the daily email per person, and a removed team member's items moving to the owner."""
 
+import re
 import sys
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -279,7 +280,10 @@ class TaskHttpTests(ServerCase):
     def member_of(self, owner, addr):
         res, out = self.request("POST", "/api/team/invite", {"email": addr, "role": "member"}, cookie=owner)
         self.assertEqual(res.status, 200, out)
-        token = out["invite_path"].split("#invite=")[1]
+        if out["invite_path"]:
+            token = out["invite_path"].split("#invite=")[1]
+        else:   # emailed (mail on): the link is in the invite, not shown to the inviter
+            token = re.search(r"#invite=([A-Za-z0-9_-]+)", self.mail_to(addr, "#invite=")).group(1)
         res, joined = self.request("POST", "/api/auth/accept-invite", {"accept_terms": True, "token": token, "name": "Mo Member", "password": "member password 1"})
         self.assertEqual(res.status, 200, joined)
         return res.getheader("Set-Cookie").split(";")[0], joined["user"]

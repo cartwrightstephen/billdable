@@ -63,6 +63,25 @@ class StorageCapTests(ServerCase):
             self.assertEqual(res.status, 429)
             self.assertIn("uploads in one hour", body["error"])
 
+    def test_compliance_and_client_form_uploads_count_toward_the_hourly_limit(self):  # Nov 27 hunt
+        cookie, _ = self.signup("burst2@pine.example")
+        res, snap = self.request("POST", "/api/jobs", {"name": "Elm", "customer": "Park GC", "address": "9 Elm Street", "approver": "Kim",
+                                                       "ap_email": "ap@park.example", "contract_cents": 100000, "role": "GC",
+                                                       "phone": "(404) 555-0100"}, cookie=cookie)
+        self.assertEqual(res.status, 200, snap)
+        payer_id = snap["jobs"][0]["payer_id"]
+        res, out = self.request("POST", "/api/compliance/docs", {"type": "coi", "payer_id": payer_id}, cookie=cookie)
+        self.assertEqual(res.status, 200, out)
+        doc_id = out["doc_id"]
+        with mock.patch.dict(os.environ, {"DURACASH_UPLOADS_PER_HOUR_USER": "1"}):
+            self.assertEqual(self.upload(cookie, b"note", "n.txt")[0].status, 200)
+            res, body = self.request("POST", f"/api/compliance/docs/{doc_id}/file", raw=b"%PDF-1.4 coi", cookie=cookie,
+                                     headers={"Content-Type": "application/pdf", "X-Filename": "coi.pdf"})
+            self.assertEqual(res.status, 429, body)
+            res, body = self.request("POST", f"/api/payers/{payer_id}/client-forms/upload/payapp", raw=b"%PDF-1.4 form", cookie=cookie,
+                                     headers={"Content-Type": "application/pdf", "X-Filename": "form.pdf"})
+            self.assertEqual(res.status, 429, body)
+
     def test_email_attachments_past_the_cap_are_listed_as_skipped(self):
         cookie, data = self.signup("capmail@pine.example")
         with mock.patch.dict(os.environ, {"DURACASH_TRIAL_STORAGE_CAP_MB": "1"}):
