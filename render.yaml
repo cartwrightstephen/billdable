@@ -80,3 +80,12 @@ services:
         sync: false
       - key: QBO_ENV
         sync: false
+      # DocuSign (docusign.py; docs/setup-integrations.md): demo keys on staging.
+      - key: DOCUSIGN_CLIENT_ID
+        sync: false
+      - key: DOCUSIGN_CLIENT_SECRET
+        sync: false
+      - key: DOCUSIGN_ENV
+        sync: false
+      - key: DOCUSIGN_CONNECT_KEY
+        sync: false

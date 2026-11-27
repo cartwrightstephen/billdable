@@ -47,6 +47,7 @@ Also in the data directory: `uploads/<company_id>/` (imported files), `inbound_t
 | `DAILY_EMAIL_HOUR_UTC` | The hour (UTC, default `11`) from which each owner with a confirmed email gets the daily "due today" email, once a day, when email is set up, and a member what is assigned to them. Nothing is sent on a day with nothing due; a job to finish is named once a week; a company turns it off on Settings › Company. Emailed and texted reminders go from this hour too. |
 | `BILLING_ENFORCE`, `BILLING_GRACE_DAYS` | `BILLING_ENFORCE=1` makes a company read-only (never deleted) when its subscription is unpaid or cancelled, or when the trial ended more than `BILLING_GRACE_DAYS` (14) ago with no subscription. A declined card that Stripe is still retrying only shows a warning. Off by default. |
 | `QBO_CLIENT_ID`, `QBO_CLIENT_SECRET` | The Intuit Developer app's keys; with them, owners can connect QuickBooks (read-only) on Money › Payments. Add `<DURACASH_URL>/api/qbo/callback` as a redirect URI in the Intuit app. `QBO_ENV=production` for real companies; the default is the sandbox. Tokens live in `qbo_connections.json`, which the backups hold, so a restore keeps the connection (one that expired meanwhile needs Connect again). |
+| `DOCUSIGN_CLIENT_ID`, `DOCUSIGN_CLIENT_SECRET`, `DOCUSIGN_ENV`, `DOCUSIGN_CONNECT_KEY` | DocuSign (docusign.py). With the integration key and its secret, owners can connect the company's DocuSign account on Settings › Company, and the Sign step of a pay app, a change order and a state waiver form offers Sign with DocuSign beside the typed name. `DOCUSIGN_ENV=production` after DocuSign's go-live review; the default is the demo environment. `DOCUSIGN_CONNECT_KEY` is the Connect HMAC secret: without it no webhook is asked for or trusted, and a signature is filed when the signer comes back or on Check DocuSign. Redirect URI `<DURACASH_URL>/api/docusign/callback`; see docs/setup-integrations.md. Tokens live in `docusign_connections.json` and envelopes in flight in `docusign_envelopes.json`, both in the backups. |
 | `DURACASH_STORAGE` | `json` keeps the one-file-per-company layout. Unset (the default) uses SQLite. |
 | `DURACASH_ENV` | `production` turns the demo account off unless `DURACASH_DEMO=readonly` (when off: not created, can't sign in, old demo sessions end) and refuses to start unless `DURACASH_DATA_DIR` is an existing directory, `COOKIE_SECURE=1` and `DURACASH_URL` is an `https://` address. Unset everywhere else. |
 | `DURACASH_DATA_PERSISTENT` | `1` once a deploy has been seen to keep the data. Until then the landing page says "Demo: data may be erased". |
@@ -202,6 +203,7 @@ Tests write to a temporary directory, never to `data/`. GitHub Actions (`.github
 - `reminders.py`: reminders by app, email and text
 - `exports.py`, `job_archive.py`: the CSV lists and a finished job's zip
 - `payapp_pdf.py`: the pay app PDF
+- `docusign.py`, `docusign_http.py`: DocuSign eSignature: the connection, envelopes, the Connect webhook and filing what comes back signed
 - `trial.py`: trial status
 - `backup.py`: backups and restore
 - `offsite.py`: encrypted off-site copies of backups (age, S3-compatible upload)
