@@ -18,16 +18,33 @@ the service after.
 2. Merging into `dev` deploys **duracash-staging** (free, throwaway data, no email). Click
    through the change there: sign up, create a job, draft a pay app, open the PDF.
 3. Open a pull request from `dev` into `main` and merge it. Render deploys **duracash**.
-4. Check `https://<site>/healthz`: `ok` is true, `env` is `production`, `last_backup` is the
-   same time as before the deploy (a new one appears within `BACKUP_HOURS`).
+4. Check `https://<site>/healthz`: it answers `{"ok": true, "env": "production"}` (staging says
+   `staging`). In the Shell tab, `python3 admin.py health` shows the rest: `last_backup` is the
+   same time as before the deploy (a new one appears within `BACKUP_HOURS`), `offsite_backup`
+   and `alerts` are set up. If the deploy changed the data's schema, the log says
+   `backup before the data upgrade written: duracash-<time>-pre-upgrade-schema<N>.tar.gz`.
 5. Sign in. If the deploy went wrong, Render's **Rollback** on the previous deploy puts the old
-   code back; the data on the disk is not touched by a rollback.
+   code back. A rollback doesn't touch the disk, which is the catch: once the new code has
+   opened a company it is saved in the new schema, and the old code refuses it ("Deploy the
+   newer code"), so that company is locked out. So:
+   - If the deploy did **not** change the schema (no pre-upgrade line in its log), roll back.
+   - If it **did**, prefer fixing forward: deploy a fix on top. If you must go back, roll back,
+     then restore the pre-upgrade backup (runbook 2); changes made since the deploy are lost,
+     so tell the companies that used it. After a rollback onto upgraded data the old code logs
+     and alerts `the data was last opened with schema …` until one of these is done.
+
+A production start is refused (the deploy fails and the previous version keeps serving) when
+`DURACASH_ENV` is not one of `production`, `staging`, `development`, or a required setting is
+missing: `DURACASH_DATA_DIR`, `COOKIE_SECURE=1`, `DURACASH_URL`, the five `BACKUP_S3_*`
+settings, `BACKUP_AGE_RECIPIENT` and `ALERT_WEBHOOK_URL`. The log line `Refusing to start` names
+it. `DURACASH_ALLOW_NO_OFFSITE=1` starts production without the off-site and alert settings,
+with a warning on every start; remove it once they are filled in.
 
 The first production deploy with the disk: deploy twice and repeat step 4 both times. Only then
 set `DURACASH_DATA_PERSISTENT=1`.
 
 The first deploy that runs as the `duracash` user (R6-09): at step 4 also check that `ok` is
-true and `disk_free_mb` is shown, then make one change (add a note to a job) and reload, so a
+true and `python3 admin.py health` shows `disk_free_mb`, then make one change (add a note to a job) and reload, so a
 write to the disk is seen to work. If the log says "Permission denied" under the data folder,
 roll back and check the disk's mount path matches `DURACASH_DATA_DIR`.
 
@@ -42,8 +59,8 @@ python3 backup.py list
 1. In Render, **Suspend** the service so nothing writes during the restore.
 2. In the Shell tab: `python3 backup.py restore /var/data/backups/<file>.tar.gz`. The current
    data is moved to `/var/data/pre-restore-<time>/`, never deleted. That includes the list of
-   deleted companies, the QuickBooks connections and the monthly and daily job records: the
-   backup's copies come back with the companies, so a company deleted after the backup is back
+   deleted companies and the monthly and daily job records: the backup's copies come back with
+   the companies, so a company deleted after the backup is back
    and can be changed. A backup made with `BACKUP_UPLOADS=0` leaves the uploads on the disk as
    they are; to restore them too, use the off-site copy.
 3. **Resume** the service and sign in.
@@ -80,13 +97,31 @@ redeploys with the new value.
 | --- | --- | --- |
 | `SMTP_PASSWORD` | The mail provider's API key or SMTP password | Send yourself a password reset to check email still goes |
 | `TWILIO_AUTH_TOKEN` | Twilio console | Text the number; the item should land in the Inbox |
-| `BACKUP_S3_KEY_ID`, `BACKUP_S3_SECRET` | B2 application keys (write-only) | `python3 backup.py upload` in the Shell; `/healthz` shows a new `offsite_backup` |
+| `BACKUP_S3_KEY_ID`, `BACKUP_S3_SECRET` | B2 application keys (write-only) | `python3 backup.py upload` in the Shell; `python3 admin.py health` shows a new `offsite_backup` |
 | `BACKUP_AGE_RECIPIENT` | `age-keygen` on a laptop; store the private key in both password managers | Upload one backup and decrypt it on the laptop before deleting the old key |
 | `ALERT_WEBHOOK_URL` | Slack or Better Stack | The next crash or failed backup posts there |
 
 A customer's inbound email, text or calendar address that leaked: the owner uses
 **Make a new address** in the app (Inbox or Calendar). Signing someone out everywhere:
 `python3 admin.py end-sessions <company id>`.
+
+Every `admin.py` command run is appended to `/var/data/admin_log.jsonl` (when, which command,
+which company, an email only as a short hash, who ran it, how it ended), and a command that
+changes something posts to the alert channel, so the other founder sees it. `python3 admin.py
+log` shows the last 20 lines. Nothing in Duracash rewrites or deletes that file.
+
+## 3a. Two-step sign-in for someone who lost their phone
+
+They lost the phone and the recovery codes, so they can't sign in.
+
+1. Check it is them: reply to the email on the account, and ask something only the company
+   would know (a job name, the last pay app's amount). A request from another address is not
+   enough: this is how an account is taken over.
+2. `python3 admin.py two-step-off their@email.example` and type the email to confirm. The
+   authenticator app comes off the account, every session ends and remembered browsers are
+   forgotten; the company's Activity log says Duracash did it.
+3. They sign in with the password (and an emailed code where mail is set up) and set the app up
+   again on Settings › My account (which asks for the password).
 
 ## 4. Delete a company on request
 
@@ -116,7 +151,7 @@ refused with the reason, and the app shows it in a banner.
 
 Something is down, data looks wrong, or a leak is suspected.
 
-1. **Look**: `/healthz`, Render's **Logs** (one JSON line per request; a crash logs its
+1. **Look**: `/healthz` and `python3 admin.py health`, Render's **Logs** (one JSON line per request; a crash logs its
    traceback with the request id the user saw), and the alert channel.
 2. **Contain**: if data is being damaged or exposed, **Suspend** the service. A suspended
    service shows Render's page; nothing more is written.
@@ -144,10 +179,12 @@ Once the Intuit Developer app exists (setup doc, section 1):
    `qbo.py` were written from Intuit's documentation and tested only against a stand-in.
 5. For real companies: Intuit's production keys (after their app review), `QBO_ENV=production`.
 
-Tokens are in `qbo_connections.json` in the data directory, and the backups hold it (R6-06): a
-restore keeps the connection. When a connection expires (Intuit's refresh tokens last about 100
-days unused), or one was made after the backup that was restored, an owner presses Connect
-QuickBooks again. Disconnect revokes the token at Intuit.
+Tokens are in `qbo_connections.json` in the data directory, and the backups leave it out
+(security review H4): a deleted company's tokens must not live on in a backup. A restore onto
+the same disk leaves the connections as they are; onto a new disk, owners press Connect
+QuickBooks again. When a connection expires (Intuit's refresh tokens last about 100 days
+unused), an owner connects again. Disconnect, and deleting the company, revoke the token at
+Intuit.
 
 ## 7. Billing with Stripe
 

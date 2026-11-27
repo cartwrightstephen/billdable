@@ -19,11 +19,15 @@ Try everything on `duracash-staging` first. Staging has `DURACASH_ENV=staging`, 
 | `MAIL_ALLOWLIST` | staging only | Addresses and `@domains`, separated by commas. Leave it out on production. |
 | `MAIL_DAILY_LIMIT` | optional | Emails per company per 24 hours. Default 50. |
 | `MAIL_EVENTS_TOKEN` | optional | A random secret of 16 or more characters, for bounce reports. |
+| `MAIL_EVENTS_PASSWORD` | optional, recommended | A second secret: the bounce webhook then needs HTTP Basic with it. |
+| `INBOUND_WEBHOOK_PASSWORD` or `INBOUND_SIGNING_KEY` | production, if inbound email is used | Production refuses inbound email without one of them (the address alone is not enough). |
 
 **To register with the mail provider**
 
 - Verify the `MAIL_FROM` domain (SPF and DKIM).
-- Bounce webhook: `https://<site>/api/mail-events/<MAIL_EVENTS_TOKEN>`
+- Bounce webhook: `https://<site>/api/mail-events/<MAIL_EVENTS_TOKEN>`, or with `MAIL_EVENTS_PASSWORD`
+  set, `https://duracash:<MAIL_EVENTS_PASSWORD>@<site>/api/mail-events/<MAIL_EVENTS_TOKEN>`
+  (Postmark and SendGrid both take a user name and password in the webhook address).
 - Inbound email, if used: an owner copies the address from Communications, Inbox.
 
 **Who to list on staging.** List everyone who signs in to test, as well as anyone who should receive test mail. A person off the list gets no confirmation link, so their own emails stay unsent until they are listed. Outside production they sign in without an emailed code, and they can't get the code that changes a password.
