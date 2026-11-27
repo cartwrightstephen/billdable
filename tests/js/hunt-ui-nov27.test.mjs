@@ -108,3 +108,30 @@ test("a pay app waiting on a signature says so, not Ready to send", async () => 
   assert.match(invoicePill({ status: "draft", approval: { waiting: ["Dana"] } }), />Draft</);
   assert.deepEqual(jobStatus({ invoices: [waiting], blockers: [], packet: [] }), ["Waiting for signature", "copper"]);
 });
+
+test("the Progress pay app page's running figure: work and stored to date, less what pay apps sent billed", async () => {
+  const { progressEstimate, progressEstimateHtml } = await import("../../static/js/sov.js");
+  const lines = [
+    { id: "a", qty_milli: 24000, rate_cents: 145000, scheduled_cents: 3480000, done_milli: 0, sent_cents: 0 },
+    { id: "b", qty_milli: 1000, rate_cents: 1273000, scheduled_cents: 1273000, lump_sum: true, done_milli: 0, sent_cents: 0 },
+    { id: "c", qty_milli: 1000, rate_cents: 350000, scheduled_cents: 350000, lump_sum: true, done_milli: 1000, sent_cents: 350000 },
+  ];
+  // 12 of 24 at $1,450 and $1,500 stored on a lump sum at 0%: the case company's PA-SORR-02, $18,900.
+  assert.equal(progressEstimate(lines, { a: { done: "12" }, b: { done: "0", stored: "1,500" }, c: { done: "100" } }), 1890000);
+  assert.equal(progressEstimate(lines, { a: { done: "24" } }), 3480000, "a line done in full bills its scheduled value");
+  assert.equal(progressEstimate(lines, { a: { done: "x" } }), null);
+  assert.match(progressEstimateHtml({ sov_view: {} }, 1890000), /This pay app: about \$18,900\.00, before retainage\./);
+});
+
+test("Who hired you: short choices a phone shows whole, the full words under the box", () => {
+  const src = readFileSync(new URL("../../static/js/views/compliance.js", import.meta.url), "utf8");
+  assert.match(src, /options: \[\["", "From the client's type"\]\]\.concat\(tiers\.map\(\(\[k, w\]\) => \[k, SHORT_TIER\(w\)\]\)\)/);
+  const SHORT_TIER = (words) => String(words).replace(/\s*\([^)]*\)\s*$/, "");
+  assert.equal(SHORT_TIER("Hired by the owner (you are the prime contractor)"), "Hired by the owner");
+  assert.equal(SHORT_TIER("Public project"), "Public project");
+});
+
+test("a lump sum billed in full reads billed 100%, not 100.0%", () => {
+  const src = readFileSync(new URL("../../static/js/sov.js", import.meta.url), "utf8");
+  assert.match(src, /`billed \$\{l\.lump_sum \? \+\(l\.billed_qty_milli \/ 10\)\.toFixed\(1\) \+ "%"/);
+});

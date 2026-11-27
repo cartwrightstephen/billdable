@@ -169,6 +169,18 @@ function deadlineRow(j, r, edit) {
   </tr>`;
 }
 
+// Who hired you: short choices a phone shows whole ("Hired by the owner"), with what each means,
+// and what the client's type gives, in the line under it (Nov 27 hunt: the choice was cut off).
+const SHORT_TIER = (words) => String(words).replace(/\s*\([^)]*\)\s*$/, "");
+function tierField(f, j, saved) {
+  const tiers = (data.tiers || []).map(t => [unesc(t[0]), unesc(t[1])]);
+  const fromClient = (tiers.find(t => t[0] === unesc(j.tier || "")) || [, unesc(j.tier || "")])[1];
+  const picked = tiers.find(t => t[0] === unesc(saved.tier || ""));
+  const help = picked ? picked[1] + "." : fromClient ? `From the client's type: ${fromClient}.` : "";
+  return field({ form: f, name: "tier", id: `${f}-tier`, label: "Who hired you", value: unesc(saved.tier || ""), help,
+    options: [["", "From the client's type"]].concat(tiers.map(([k, w]) => [k, SHORT_TIER(w)])) });
+}
+
 function jobLienCard(j, edit) {
   const f = `lien-${j.job_id}`;
   const i = j.inputs || {};
@@ -177,7 +189,7 @@ function jobLienCard(j, edit) {
   const lastWords = { saved: "typed in", job_record: "the latest job record", work_done: "the day the work was marked done" }[j.last_from] || "";
   const form = edit ? `<div data-form-key="${f}">${formErrorLine(f)}<div class="form-grid">
       ${field({ form: f, name: "state", id: `${f}-state`, label: "State", value: unesc(saved.state || ""), placeholder: unesc(j.state || "GA"), help: j.state ? `From the job's address: ${unesc(j.state)}. Type another to change it.` : "The job's address names no state.", rule: "state" })}
-      ${field({ form: f, name: "tier", id: `${f}-tier`, label: "Who hired you", value: unesc(saved.tier || ""), options: [["", `From the client's type (${unesc(((data.tiers || []).find(t => t[0] === j.tier) || [, j.tier])[1])})`]].concat((data.tiers || []).map(t => [unesc(t[0]), unesc(t[1])])) })}
+      ${tierField(f, j, saved)}
       ${field({ form: f, name: "first_furnished_on", id: `${f}-first`, label: "First work or materials", type: "date", value: unesc(saved.first_furnished_on || ""), help: i.first_furnished_on && !saved.first_furnished_on ? `Blank uses the job's start, ${unesc(fmtDate(i.first_furnished_on))}.` : "" })}
       ${field({ form: f, name: "last_furnished_on", id: `${f}-last`, label: "Last work or materials", type: "date", value: unesc(saved.last_furnished_on || ""), help: i.last_furnished_on && !saved.last_furnished_on ? `Blank uses ${lastWords}, ${unesc(fmtDate(i.last_furnished_on))}.` : "Blank uses the latest job record." })}
       ${field({ form: f, name: "noc_filed_on", id: `${f}-noc`, label: "Notice of Commencement filed", type: "date", value: unesc(saved.noc_filed_on || ""), help: "If the owner or contractor filed one. Ask the contractor for a copy." })}
