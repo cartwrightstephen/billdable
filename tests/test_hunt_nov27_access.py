@@ -72,5 +72,40 @@ class AuditAnchorAfterResetAndRestore(ServerCase):
         self.assertTrue(result["ok"], f"an older trail put back by a restore is not a changed trail: {result}")
 
 
+class TeamManagersCantHandOutMore(ServerCase):
+    """Someone who manages the team but isn't an Owner can't give themselves, a colleague or an
+    invite a profile that can do more than they can (A4's aim: "someone holding team can't give
+    themselves more")."""
+
+    def setUp(self):
+        super().setUp()
+        self.owner, data = self.signup(f"mgr{id(self)}@pine.example")
+        self.company = data["user"]["company_id"]
+        for name, perms in (("Office", ["team", "send_payapps"]), ("Co-owner", [k for k, _ in server.profiles.PERMISSIONS])):
+            res, out = self.request("POST", "/api/team/profiles", {"name": name, "perms": perms}, cookie=self.owner)
+            self.assertEqual(res.status, 200, out)
+        team = self.request("GET", "/api/team", cookie=self.owner)[1]
+        self.ids = {p["name"]: p["id"] for p in team["profiles"]}
+        mgr = auth.create_user(f"office{id(self)}@pine.example", PASSWORD, "Olga Office", self.company, role="member")
+        clerk = auth.create_user(f"clerk{id(self)}@pine.example", PASSWORD, "Cal Clerk", self.company, role="member")
+        auth.set_role(self.company, mgr["id"], self.ids["Office"], actor_id=data["user"]["id"], profiles=list(self.ids.values()))
+        self.mgr, self.clerk = mgr, clerk
+        self.mgr_cookie = "duracash_session=" + auth.create_session(auth.user_by_email(mgr["email"]))
+
+    def test_not_to_themselves_a_colleague_or_an_invite(self):
+        for who in (self.mgr["id"], self.clerk["id"]):
+            res, out = self.request("POST", f"/api/team/{who}/role", {"profile_id": self.ids["Co-owner"]}, cookie=self.mgr_cookie)
+            self.assertEqual(res.status, 409, out)
+            self.assertIn("more than you can", out["error"])
+        res, out = self.request("POST", "/api/team/invite", {"email": "new@pine.example", "profile_id": self.ids["Co-owner"]}, cookie=self.mgr_cookie)
+        self.assertEqual(res.status, 409, out)
+        self.assertEqual(auth.user_by_email(self.mgr["email"])["profile_id"], self.ids["Office"])
+        # What they hold themselves, or less, they can still hand out; an owner hands out anything.
+        res, out = self.request("POST", f"/api/team/{self.clerk['id']}/role", {"profile_id": self.ids["Office"]}, cookie=self.mgr_cookie)
+        self.assertEqual(res.status, 200, out)
+        res, out = self.request("POST", f"/api/team/{self.clerk['id']}/role", {"profile_id": self.ids["Co-owner"]}, cookie=self.owner)
+        self.assertEqual(res.status, 200, out)
+
+
 if __name__ == "__main__":
     unittest.main()

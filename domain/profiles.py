@@ -253,6 +253,17 @@ def may_take(user: dict[str, Any], action: str, state: dict[str, Any]) -> bool:
     return need is None or has_perm(user, need, state) or (action in JOB_ACTION_ALSO and has_perm(user, JOB_ACTION_ALSO[action], state))
 
 
+def grantable(user: dict[str, Any], state: dict[str, Any]) -> set[str]:
+    """The profiles this person may give someone (an invite, a change of profile): every one for
+    an Owner; for anyone else who manages the team, Member (the company's starting profile, as
+    an owner set it) and those that can do nothing they can't, so holding "team" doesn't lead to
+    a Co-owner profile for themselves or anyone else (A4)."""
+    if user_profile_id(user) == OWNER:
+        return set(profile_ids(state))
+    mine = set(perms_of(user, state))
+    return {p["id"] for p in profiles(state) if p["id"] == MEMBER or (p["id"] != OWNER and set(p["perms"]) <= mine)}
+
+
 def holders(state: dict[str, Any], perm: str) -> set[str]:
     """The ids of the profiles that hold this permission."""
     return {p["id"] for p in profiles(state) if perm in p["perms"]}

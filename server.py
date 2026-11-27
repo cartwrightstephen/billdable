@@ -2722,7 +2722,8 @@ class Handler(BaseHTTPRequestHandler):
             if not _within_limit(f"invite:{company_id}", 20, 24 * 3600):
                 raise auth.AuthError("20 invites a day is the limit. Try again tomorrow.")
             raw, invite = auth.create_invite(company_id, ctx.body.get("email"), ctx.body.get("profile_id") or ctx.body.get("role") or "member",
-                                             user["name"], actor_id=user["id"], **self._team_rules(company_id))
+                                             user["name"], actor_id=user["id"], **self._team_rules(company_id),
+                                             grantable=profiles.grantable(user, company_state(company_id)))
             invite["profile_name"] = profiles.profile_name(company_state(company_id), invite["profile_id"])
             url = app_url()
             note = {"invite_path": f"/#invite={raw}", "invite_link": f"{url}/#invite={raw}" if url else None, "emailed": False,
@@ -2749,7 +2750,8 @@ class Handler(BaseHTTPRequestHandler):
     def _p_team_role(self, m, ctx: "Ctx") -> None:
         def role(user: dict) -> tuple:
             rules = self._team_rules(user["company_id"])
-            changed = auth.set_role(user["company_id"], m.group(1), ctx.body.get("profile_id") or ctx.body.get("role"), actor_id=user["id"], **rules)
+            changed = auth.set_role(user["company_id"], m.group(1), ctx.body.get("profile_id") or ctx.body.get("role"), actor_id=user["id"], **rules,
+                                    grantable=profiles.grantable(user, company_state(user["company_id"])))
             name = profiles.profile_name(company_state(user["company_id"]), changed["profile_id"])
             return f"{user['name']} gave {changed['name']} the {name} profile.", None
 

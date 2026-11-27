@@ -1064,6 +1064,7 @@ def burn_hash_time(password: Any) -> None:
 
 OWNER_PROFILE = "owner"
 # Someone who manages the team without being an Owner can't make, change or remove an Owner.
+MORE_THAN_YOURS = "That profile can do more than you can. Ask an owner to give it, or to change it."
 ONLY_OWNERS_MAKE_OWNERS = "Only an owner can give someone the Owner profile, or change or remove an owner."
 
 
@@ -1142,8 +1143,9 @@ def _check_profile(profile_id: Any, profiles: Any) -> str:
 
 
 def create_invite(company_id: str, email: Any, role: Any, invited_by: str, actor_id: str = "",
-                  profiles: Any = ROLES, managers: Any = (OWNER_PROFILE,)) -> tuple[str, dict[str, Any]]:
-    """Invite someone with a profile (role: the profile id; profiles: the ids that exist)."""
+                  profiles: Any = ROLES, managers: Any = (OWNER_PROFILE,), grantable: Any = None) -> tuple[str, dict[str, Any]]:
+    """Invite someone with a profile (role: the profile id; profiles: the ids that exist;
+    grantable: those the inviting person may give, None for any)."""
     if not isinstance(email, str) or not EMAIL_RE.match(email.strip()):
         raise AuthError("Enter the person's email address.")
     profile_id = _check_profile(role, profiles)
@@ -1156,6 +1158,8 @@ def create_invite(company_id: str, email: Any, role: Any, invited_by: str, actor
         actor = _require_owner(data, company_id, actor_id, managers)
         if profile_id == OWNER_PROFILE and _profile_of(actor) != OWNER_PROFILE:
             raise AuthError(ONLY_OWNERS_MAKE_OWNERS)
+        if grantable is not None and profile_id not in set(grantable):
+            raise AuthError(MORE_THAN_YOURS)
         if any(u["email"] == email for u in data["users"]):
             raise AuthError("That email already has a Duracash account. Each person belongs to one company.")
         pending = [v for v in data["tokens"].values() if v["kind"] == "invite" and v.get("company_id") == company_id]
@@ -1244,9 +1248,10 @@ def _drop_invites_by(data: dict[str, Any], user_id: str) -> None:
 
 
 def set_role(company_id: str, user_id: str, role: Any, actor_id: str = "", profiles: Any = ROLES,
-             managers: Any = (OWNER_PROFILE,)) -> dict[str, Any]:
+             managers: Any = (OWNER_PROFILE,), grantable: Any = None) -> dict[str, Any]:
     """Give someone another profile (role: the profile id). The company keeps at least one
-    Owner, and the Company Admin stays an Owner until they hand the Admin role on."""
+    Owner, and the Company Admin stays an Owner until they hand the Admin role on. grantable:
+    the profiles the person making the change may give (None for any)."""
     profile_id = _check_profile(role, profiles)
     with LOCK:
         data = _load()
@@ -1257,6 +1262,8 @@ def set_role(company_id: str, user_id: str, role: Any, actor_id: str = "", profi
         was = _profile_of(user)
         if OWNER_PROFILE in (profile_id, was) and _profile_of(actor) != OWNER_PROFILE:
             raise AuthError(ONLY_OWNERS_MAKE_OWNERS)
+        if grantable is not None and profile_id not in set(grantable):
+            raise AuthError(MORE_THAN_YOURS)
         if profile_id != OWNER_PROFILE and was == OWNER_PROFILE:
             if len(_owners(data, company_id)) == 1:
                 raise AuthError("A company needs at least one owner. Make someone else an owner first.")
