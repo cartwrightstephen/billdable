@@ -52,9 +52,9 @@ class AuditAnchorAfterResetAndRestore(ServerCase):
         cookie, data = self.signup("delete-anchor@pine.example")
         company_id = data["user"]["company_id"]
         self.assertTrue(self.check(company_id)["ok"])
-        self.assertIn(company_id, json.loads(audit_check.anchors_path().read_text()))
+        self.assertIn(company_id, json.loads(audit_check.anchors_path().read_text())["companies"])
         server.delete_company_data(company_id)
-        self.assertNotIn(company_id, json.loads(audit_check.anchors_path().read_text()))
+        self.assertNotIn(company_id, json.loads(audit_check.anchors_path().read_text())["companies"])
 
     def test_a_restored_backup_is_checked_afresh(self):
         cookie, data = self.signup("restore-anchor@pine.example")
