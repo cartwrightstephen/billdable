@@ -585,7 +585,7 @@ def inbound_address(company_id: str) -> str:
 def delete_company_data(company_id: str) -> int:
     """Remove a company: its users and sessions, company file (and the copy of an imported JSON
     file), reset snapshots, uploads, inbound and calendar addresses, helper and mail records, its
-    QuickBooks connection and its Stripe billing record. Backups that hold it expire on their own
+    QuickBooks and DocuSign connections and its Stripe billing record. Backups that hold it expire on their own
     (BACKUP_KEEP_DAYS, backup.purge).
     Used by the owner's Delete the company and by admin.py for a deletion request. Returns how
     many users were removed."""
@@ -612,6 +612,7 @@ def delete_company_data(company_id: str) -> int:
     sms.forget_company(company_id)
     reminders.forget_company(company_id)
     qbo.forget_company(company_id)   # its QuickBooks tokens too, revoked at Intuit (H4)
+    docusign.forget_company(company_id)   # its DocuSign tokens and envelopes in flight (H4)
     # Its Stripe billing record goes too (M5). A failure doesn't undo the deletion: it is alerted,
     # for a person to delete it in Stripe's dashboard.
     try:

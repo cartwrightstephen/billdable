@@ -297,6 +297,10 @@ class DocusignHttp(ServerCase):
         self.assertTrue(st["connected"])
         self.assertNotIn(self.fake.refresh, json.dumps(st), "tokens never reach the browser")
         self.assertIn("docusign_connected", [a["action"] for a in self.stored()["audit"]])
+        # Encrypted at rest with the server key (H3), as QuickBooks tokens are.
+        on_disk = json.loads((storage.DATA_DIR / "docusign_connections.json").read_text())[self.cid]
+        self.assertNotIn(self.fake.refresh, (on_disk["access_token"], on_disk["refresh_token"]))
+        self.assertTrue(on_disk["access_token"].startswith("enc1:") and on_disk["refresh_token"].startswith("enc1:"))
 
         # An access token near its end is refreshed before the next call.
         data = json.loads((storage.DATA_DIR / "docusign_connections.json").read_text())
@@ -305,12 +309,43 @@ class DocusignHttp(ServerCase):
         token, base, account = docusign._access(self.cid)
         self.assertEqual((token, base, account), (self.fake.access, BASE + "/restapi/v2.1", ACCOUNT))
         self.assertEqual(docusign.connection(self.cid)["refresh_token"], self.fake.refresh)
+        refreshed = json.loads((storage.DATA_DIR / "docusign_connections.json").read_text())[self.cid]
+        self.assertTrue(refreshed["refresh_token"].startswith("enc1:"), "the refreshed token is stored encrypted")
 
         res, st = self.request("POST", "/api/docusign/settings", {"co_client_signs": True}, cookie=self.cookie)
         self.assertTrue(st["co_client_signs"])
         res, st = self.request("POST", "/api/docusign/disconnect", {}, cookie=self.cookie)
         self.assertFalse(st["connected"])
         self.assertIsNone(docusign.connection(self.cid))
+
+    def test_tokens_from_before_encryption_are_read_and_encrypted_on_the_next_save(self):
+        storage.write_json(storage.DATA_DIR / "docusign_connections.json", {self.cid: {
+            "access_token": "plain-A", "refresh_token": "plain-R", "access_expires_at": "2999-01-01T00:00:00+00:00",
+            "account_id": ACCOUNT, "base_uri": BASE}})
+        self.assertEqual(docusign.connection(self.cid)["access_token"], "plain-A")
+        docusign.set_co_client_signs(self.cid, True)
+        raw = (storage.DATA_DIR / "docusign_connections.json").read_text()
+        self.assertNotIn("plain-R", raw)
+        self.assertTrue(json.loads(raw)[self.cid]["refresh_token"].startswith("enc1:"))
+        self.assertEqual(docusign.connection(self.cid)["refresh_token"], "plain-R")
+        # Tokens sealed for another company don't open for this one.
+        data = json.loads(raw)
+        data["co-other"] = data[self.cid]
+        storage.write_json(storage.DATA_DIR / "docusign_connections.json", data)
+        with self.assertRaises(docusign.DocusignError):
+            docusign.connection("co-other")
+
+    def test_deleting_the_company_drops_its_tokens_and_envelopes(self):  # H4, as QuickBooks
+        self.connected()
+        docusign.save_envelope({"id": "env-gone", "company_id": self.cid, "status": "sent"})
+        docusign.save_envelope({"id": "env-kept", "company_id": "co-someone-else", "status": "sent"})
+        state = self.connect()   # a Connect still in progress can't finish afterwards
+        server.delete_company_data(self.cid)
+        self.assertNotIn(self.cid, json.loads((storage.DATA_DIR / "docusign_connections.json").read_text()))
+        self.assertIsNone(docusign.envelope("env-gone"))
+        self.assertIsNotNone(docusign.envelope("env-kept"))
+        self.assertFalse(any(v.get("company_id") == self.cid for v in docusign._PENDING.values()))
+        self.assertNotIn(state, docusign._PENDING)
 
     def test_the_callback_finishes_only_for_who_pressed_connect(self):
         other, _ = self.signup("ds-other@sign.example", "Other Co")

@@ -27,8 +27,11 @@ DocuSign's addresses, fields and rules below were checked on Nov 27 2026 against
 developer pages (sources in docs/setup-integrations.md). No demo account has been connected yet;
 the first one is the last test (the checklist in that doc).
 
-Tokens are kept in <data dir>/docusign_connections.json and the envelopes in flight in
-<data dir>/docusign_envelopes.json, like qbo_connections.json.
+Tokens are kept in <data dir>/docusign_connections.json, encrypted with the server key (H3,
+vault.py: DURACASH_SECRET_KEY) and left out of the backups (H4), like qbo_connections.json: after a
+restore onto a new disk an owner connects again. Deleting a company drops its tokens, any Connect
+in progress and its envelopes in flight (forget_company). The envelopes in flight are in
+<data dir>/docusign_envelopes.json, which the backups hold.
 """
 
 from __future__ import annotations
@@ -49,6 +52,7 @@ from typing import Any, Callable
 from urllib import error, parse, request
 
 import storage
+import vault
 
 # "signature" for the eSignature REST API; "extended" so each refresh brings a refresh token with
 # a full lifetime (DocuSign: Authorization Code Grant, token lifetimes).
@@ -139,9 +143,36 @@ def _read(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def connection(company_id: str) -> dict[str, Any] | None:
+SECRET_FIELDS = ("access_token", "refresh_token")
+
+
+def _context(company_id: str) -> str:
+    return f"docusign:{company_id}"
+
+
+def _opened(company_id: str, conn: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The stored connection with its tokens decrypted. Tokens written before encryption are read as
+    they are and encrypted the next time the connection is saved."""
+    if not conn:
+        return conn
+    out = dict(conn)
+    try:
+        for field in SECRET_FIELDS:
+            if out.get(field):
+                out[field] = vault.open_sealed(out[field], _context(company_id))
+    except vault.VaultError:
+        raise DocusignError("The DocuSign connection can't be read on this server. Connect again.") from None
+    return out
+
+
+def _stored(company_id: str) -> dict[str, Any] | None:
+    """The stored connection as it is on disk: for what needs no token (status, settings)."""
     with LOCK:
         return _read(_path()).get(company_id)
+
+
+def connection(company_id: str) -> dict[str, Any] | None:
+    return _opened(company_id, _stored(company_id))
 
 
 def _store(company_id: str, conn: dict[str, Any] | None) -> None:
@@ -150,17 +181,18 @@ def _store(company_id: str, conn: dict[str, Any] | None) -> None:
         if conn is None:
             data.pop(company_id, None)
         else:
-            data[company_id] = conn
+            data[company_id] = {k: vault.seal(v, _context(company_id)) if k in SECRET_FIELDS and v and not vault.sealed(v) else v
+                                for k, v in conn.items()}
         storage.write_json(_path(), data)
 
 
 def connected(company_id: str) -> bool:
-    return configured() and bool(connection(company_id))
+    return configured() and bool(_stored(company_id))
 
 
 def status(company_id: str) -> dict[str, Any]:
     """What Settings and the Sign step show. Never a token."""
-    conn = connection(company_id) if configured() else None
+    conn = _stored(company_id) if configured() else None   # no tokens needed, so nothing to decrypt
     waiting = [{k: e.get(k) for k in ("id", "kind", "job_id", "label", "status", "created_at", "user_name")}
                for e in envelopes(company_id) if e.get("status") not in DONE | ENDED]
     return {
@@ -329,7 +361,7 @@ def finish(state: str, code: str, user_id: str = "") -> str:
     conn = _tokens(_token_request({"grant_type": "authorization_code", "code": code}))
     info = _userinfo(conn["access_token"])
     conn.update(pick_account(info))
-    old = connection(pending["company_id"]) or {}
+    old = _stored(pending["company_id"]) or {}
     conn.update(user_email=str(info.get("email") or "")[:200], user_name=str(info.get("name") or "")[:120],
                 connected_at=datetime.now(timezone.utc).isoformat(timespec="seconds"), connected_by=pending["user"],
                 co_client_signs=bool(old.get("co_client_signs")))
@@ -342,6 +374,26 @@ def disconnect(company_id: str) -> None:
     also remove Duracash from their DocuSign profile's connected apps."""
     with _REFRESH_LOCK:
         _store(company_id, None)
+
+
+def forget_company(company_id: str) -> bool:
+    """A deleted company (H4, as qbo.forget_company): its tokens go from the file, even ones this
+    server's key can't open, a Connect still in progress can no longer finish, and its envelopes in
+    flight (signers' names and emails) go too. There is nothing to revoke at DocuSign (disconnect).
+    Returns whether the company was connected."""
+    with LOCK:
+        for key in [k for k, v in _PENDING.items() if v.get("company_id") == company_id]:
+            _PENDING.pop(key, None)
+    with _REFRESH_LOCK:   # after any refresh in flight, so it can't put the connection back
+        was = _stored(company_id) is not None
+        if was:
+            _store(company_id, None)
+    with LOCK:
+        data = _read(_envelopes_path())
+        kept = {k: v for k, v in data.items() if v.get("company_id") != company_id}
+        if len(kept) != len(data):
+            storage.write_json(_envelopes_path(), kept)
+    return was
 
 
 def _access(company_id: str) -> tuple[str, str, str]:

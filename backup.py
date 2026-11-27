@@ -5,7 +5,7 @@ then every BACKUP_HOURS (default 24; 0 turns it off). Each backup is a
 .tar.gz in <data dir>/backups holding auth.json, every company file, the
 inbound tokens, the helper files, the mail counter, the list of deleted
 companies, the monthly and daily job records (R6-06) and (unless
-BACKUP_UPLOADS=0) the uploaded files. QuickBooks tokens are left out (H4).
+BACKUP_UPLOADS=0) the uploaded files. QuickBooks and DocuSign tokens are left out (H4).
 
 Each local backup is encrypted with the server key (H3, vault.py: DURACASH_SECRET_KEY) and
 named .tar.gz.enc; restore and drill decrypt it, and still read the plain .tar.gz backups made
@@ -56,15 +56,16 @@ import vault
 
 # Files at the top of the data directory that a backup holds and a restore puts back. Each is
 # small and guarded by its own lock, if any (the key in make_backup's `locks`).
-# QuickBooks tokens (qbo_connections.json) are left out on purpose (H4): a backup would keep a
-# deleted company's live tokens for as long as it is kept. After a restore, owners connect again.
+# QuickBooks and DocuSign tokens (qbo_connections.json, docusign_connections.json) are left out on
+# purpose (H4): a backup would keep a deleted company's live tokens for as long as it is kept. After
+# a restore onto a new disk, owners connect again.
 TOP_FILES = (("auth.json", "auth"), ("inbound_tokens.json", "tokens"), ("helper_answers.json", None), ("helper_log.json", None),
              ("mail_sends.json", None), ("deleted_companies.json", "deleted"),
-             ("docusign_connections.json", "docusign"), ("docusign_envelopes.json", "docusign"),
+             ("docusign_envelopes.json", "docusign"),
              ("monthly_jobs.json", None), ("daily_jobs.json", None))
 TOP_NAMES = tuple(name for name, _ in TOP_FILES)
 # In backups made before that: read past, never put back.
-LEFT_BEHIND = ("qbo_connections.json",)
+LEFT_BEHIND = ("qbo_connections.json", "docusign_connections.json")
 
 PREFIX = "duracash-"
 OLD_PREFIX = "billdable-"  # backups made before the rename to Duracash

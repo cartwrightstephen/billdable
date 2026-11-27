@@ -224,6 +224,15 @@ class RecoveryTests(unittest.TestCase):
         # QuickBooks tokens never go into a backup (H4): a deleted company's would outlive it there.
         self.assertNotIn("qbo_connections.json", names)
 
+    def test_docusign_tokens_stay_out_of_backups_and_its_envelopes_go_in(self):  # H4, as QuickBooks
+        (self.root / "docusign_connections.json").write_text('{"co-1": {"refresh_token": "live"}}')
+        (self.root / "docusign_envelopes.json").write_text('{"env-1": {"company_id": "co-1"}}')
+        with backup.open_archive(backup.make_backup()) as tar:
+            names = set(tar.getnames())
+        self.assertNotIn("docusign_connections.json", names)
+        self.assertIn("docusign_envelopes.json", names)
+        self.assertIn("docusign_connections.json", backup.LEFT_BEHIND, "read past in a backup made before")
+
     def test_an_older_backup_with_quickbooks_tokens_restores_without_them(self):  # H4
         (self.root / "qbo_connections.json").write_text('{"co-1": {"refresh_token": "old"}}')
         older = self.root / "backups" / "duracash-20260101T000000000000Z.tar.gz"
