@@ -110,12 +110,48 @@ test("Edit on a diary entry fills the same form from what it saved", () => {
   assert.equal(daily.daily.editing, null);
 });
 
-test("the Job records card: a diary entry's Edit opens its form; any other record keeps the label edit", async () => {
+test("the Job records card: a diary entry's Edit opens its form; any other record opens the same form for itself; Delete with the permission", async () => {
   const { recordCardHtml } = await import("../../static/js/views/job-record.js");
+  page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
   core.setState(company([job()], { daily_records: [{ id: "dr1", job_id: "j1", at: "2026-11-26T12:00:00", notes: "x" }] }));
-  const html = recordCardHtml(job({ records: [{ id: "rd", kind: "daily", label: "Diary entry 2026-11-26", daily_record_id: "dr1" }, { id: "rn", kind: "note", label: "Note" }] }));
+  const records = [{ id: "rd", kind: "daily", label: "Diary entry 2026-11-26", daily_record_id: "dr1" }, { id: "rn", kind: "note", label: "Note" },
+    { id: "rf", kind: "contract", label: "contract.pdf", file_ids: ["f9"] }];
+  const html = recordCardHtml(job({ records }));
   assert.match(html, /data-action="daily-edit" data-id="j1" data-item="dr1"/);
-  assert.match(html, /data-action="record-edit" data-item="rn"/);
+  assert.match(html, /data-action="record-full-edit" data-id="j1" data-item="rn"/);
+  assert.match(html, /data-action="record-delete" data-id="j1" data-item="rd"/, "a whole job record");
+  assert.match(html, /data-action="record-delete" data-id="j1" data-item="rn"/);
+  assert.doesNotMatch(html, /data-action="record-delete" data-id="j1" data-item="rf"/, "a record with a file stays");
+  page.setMe({ name: "Fay", company_id: "co-p", role: "member", perms: [] });
+  assert.doesNotMatch(recordCardHtml(job({ records })), /record-delete/, "Delete needs Manage jobs");
+  page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
+});
+
+test("Edit on a record that isn't a diary entry: its own section of the form, filled in, saved to record-update", async () => {
+  const r = { id: "ri", kind: "supplier_invoice", label: "Invoice: Home Depot #55", amount_cents: 4000, on_date: "2026-11-20" };
+  const j = job({ records: [r] });
+  const p = daily.recordPrefill(j, r);
+  assert.deepEqual([p.draft.invoices_supplier_0, p.draft.invoices_number_0, p.draft.invoices_amount_0, p.draft.date], ["Home Depot", "55", "40.00", "2026-11-20"]);
+  assert.deepEqual(p.editing.recordIds, { invoices_0: "ri" });
+  assert.equal(p.editing.recordId, "ri");
+  page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
+  core.setState(company([j]));
+  reg.actions["record-full-edit"]({ dataset: { item: "ri" } }, "j1");
+  page.setLocation("daily");
+  const html = reg.views.daily();
+  assert.match(html, /<h1>Edit record<\/h1>/);
+  assert.match(html, /id="daily-invoices-supplier-0"[^>]*value="Home Depot"/);
+  assert.doesNotMatch(html, /id="daily-notes"/, "no diary on a single record");
+  assert.doesNotMatch(html, /data-record-section="time_sheets"/, "only its own section");
+  dom.answers.unshift((path) => (path === "/api/jobs/j1/record-update/ri" ? { status: 200, body: company([j]) } : undefined));
+  const typedIn = { invoices_supplier_0: "Lowe's", invoices_number_0: "55", invoices_amount_0: "40.00", date: "2026-11-20" };
+  dom.all['[data-form-key="daily"] [data-field]'] = Object.entries(typedIn).map(([field, value]) => ({ dataset: { field }, value }));
+  await reg.actions["daily-save"]();
+  delete dom.all['[data-form-key="daily"] [data-field]'];
+  const sent = dom.requests.filter(x => x.path === "/api/jobs/j1/record-update/ri").pop();
+  assert.ok(sent, "saved to that record");
+  assert.deepEqual(sent.body.entries, [{ section: "invoices", row: 0, supplier: "Lowe's", number: "55", amount: "40.00", record_id: "ri" }]);
+  assert.equal(daily.daily.editing, null);
 });
 
 test("a record's label doesn't repeat the kind its pill says (Nov 27: \"Diary entry Diary entry\")", async () => {

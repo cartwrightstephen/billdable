@@ -130,7 +130,7 @@ export default async function ({ browser, BASE, step, signedInPage, confirmDialo
     await p.locator("#sov-card").waitFor();
     // The schedule and the job records are folded on a phone (Round 1, item 13): open them.
     for (const fold of ["#sov-card", "details.job-records"]) await p.locator(`${fold} > summary`).click();
-    for (const selector of ['[data-action="sov-correct-open"]', '[data-action="record-edit"]']) {
+    for (const selector of ['[data-action="sov-correct-open"]', '[data-action="record-full-edit"]']) {
       const box = await p.locator(selector).first().boundingBox();
       assert.ok(box && box.height >= 40, `${selector}: ${box && box.height}`);
     }

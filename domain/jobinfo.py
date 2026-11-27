@@ -237,13 +237,15 @@ def next_payapp_due(state: dict[str, Any], job: dict[str, Any], payer: dict[str,
     day = _int_or(payer.get("payapp_due_day"), 0)
     if not 1 <= day <= 31:
         return None
-    start = _as_date(job_started_on(state, job)) or today
+    started = _as_date(job_started_on(state, job))
+    start = started or today
     y, m = min(start, today).year, min(start, today).month
     for _ in range(40):
         cut = _cutoff(day, y, m)
         due = business_day_on_or_before(cut)
-        # A cutoff on a weekend moves back to the Friday, which may be before a Saturday start.
-        if cut > start and due >= max(start, today):
+        # The business day before can fall on or before the start (started Sat the 14th, day 15 a
+        # Sunday: Fri the 13th), so that cycle is skipped too (Nov 27 audit).
+        if cut > start and due >= today and (not started or due > started):
             return due
         y, m = (y + 1, 1) if m == 12 else (y, m + 1)
     return None
@@ -326,8 +328,10 @@ def job_key_dates(state: dict[str, Any], job: dict[str, Any], payer: dict[str, A
         nxt = today.month % 12 + 1
         for key, label, cut in (("cutoff_this", "Pay app due this month", _cutoff(day, today.year, today.month)),
                                 ("cutoff_next", "Pay app due next month", _cutoff(day, today.year + (today.month == 12), nxt))):
-            if start and (cut <= start or business_day_on_or_before(cut) < start):   # never before the start
+            if start and business_day_on_or_before(cut) <= start:
                 continue
+            if business_day_on_or_before(cut) < today:
+                continue   # gone by: next month's is the one to meet (Nov 27 audit)
             if first and not any(d["key"].startswith("cutoff") or d["key"] == "first_payapp" for d in out):
                 key, label = key, "First pay app due"
             add(key, label, business_day_on_or_before(cut).isoformat())

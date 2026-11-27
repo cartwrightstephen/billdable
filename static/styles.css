@@ -151,6 +151,9 @@ a.btn { display: inline-block; text-decoration: none; }
 table.sortable th { cursor: pointer; }
 table.sortable th:hover { color: var(--copper); }
 .form-inline { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
+/* DocuSign before it is switched on: the note under Connect or Sign with DocuSign (views/docusign.js). */
+.docusign-note { display: block; flex-basis: 100%; margin-top: 6px; }
+.docusign-note .sub { display: inline; }
 .form-inline input, .form-inline textarea, .form-inline select { padding: 6px 8px; border: 1px solid var(--field); border-radius: 6px; font: inherit; background: var(--field-bg); min-height: 34px; }
 .btn:disabled { opacity: 1; background: var(--field-bg); color: var(--muted); border: 1px dashed var(--field); cursor: not-allowed; }
 .gate-reason { font-size: 13px; color: var(--red); margin: 6px 0; }

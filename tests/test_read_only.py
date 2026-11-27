@@ -33,7 +33,10 @@ class DemoModeTests(unittest.TestCase):
                  ({"DURACASH_ENV": "production", "DURACASH_DEMO": "readonly"}, "readonly"),
                  ({"DURACASH_ENV": "production", "DURACASH_DEMO": "on"}, "readonly"),
                  ({"DURACASH_ENV": "production", "DURACASH_DEMO": "off"}, "off"),
-                 ({"DURACASH_DEMO": "off"}, "off"), ({"DURACASH_DEMO": "readonly"}, "readonly")]
+                 ({"DURACASH_DEMO": "off"}, "off"), ({"DURACASH_DEMO": "readonly"}, "readonly"),
+                 # Staging is public too (M9): read-only unless DURACASH_DEMO=on.
+                 ({"DURACASH_ENV": "staging"}, "readonly"), ({"DURACASH_ENV": "staging", "DURACASH_DEMO": "on"}, "on"),
+                 ({"DURACASH_ENV": "staging", "DURACASH_DEMO": "off"}, "off")]
         for env, want in cases:
             with mock.patch.dict("os.environ", {"DURACASH_ENV": "", "DURACASH_DEMO": "", **env}):
                 self.assertEqual(server.demo_mode(), want, env)

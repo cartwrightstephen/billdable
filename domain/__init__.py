@@ -331,7 +331,6 @@ GATES = {"hard": "Required (hard stop)", "soft": "Check (soft)"}
 SOFT_BY_DEFAULT = {"photo", "ticket", "time_sheet", "stored"}
 SOFT_ANSWERS = {"checked": "checked", "not_needed": "not needed this time"}
 OVERRIDE_PERM = "Only someone who can send pay apps can let a required document go without it."
-GATE_PERM = "Only someone who can send pay apps can make a required document a check."
 
 
 def gate_key(item: dict[str, Any]) -> str:
@@ -3563,7 +3562,11 @@ def record_missed_on(state: dict[str, Any], job: dict[str, Any], today: date) ->
 def cos_without_work(state: dict[str, Any], job: dict[str, Any]) -> list[dict[str, Any]]:
     """Signed change orders with no work recorded against them (Nov 26: approved work gets missed
     and never billed): no diary entry's change order work names it, no record is tied to it, its
-    schedule lines have nothing in the field, and no pay app has billed it."""
+    schedule lines have nothing in the field, and no pay app has billed it. A finished or closed job
+    is left alone, as record_missed_on does: its work is done (Hartline's Decatur addition, billed in
+    full on one lump-sum pay app, showed it; Nov 27 audit)."""
+    if job.get("closed") or job.get("work_status") == "complete":
+        return []
     ids = set(job.get("daily_records") or [])
     logged = {row.get("co_id") for r in state.get("daily_records", []) if r.get("id") in ids for row in (r.get("sections") or {}).get("co_work") or []}
     logged |= {r.get("co_id") for r in job.get("records", []) if r.get("co_id")}
@@ -5354,22 +5357,29 @@ def set_job_paperwork(state: dict[str, Any], job_id: str, body: dict[str, Any], 
                       may_override: bool = True) -> dict[str, Any]:
     """Change the paperwork this job needs: {packet: the list, no_paperwork: true for nothing, or
     use_client: true for the client's list again}. It applies from the next pay app and to a draft
-    that hasn't been sent; a sent pay app stays as it went (B9). Audited. may_override: whether this
-    person can let a hard stop go (send pay apps); without it a Required document can't be made a
-    Check, which would let the pay app go without it (Nov 27 hunt)."""
+    that hasn't been sent; a sent pay app stays as it went (B9). Audited. may_override: whoever
+    asks can send pay apps, as turning a hard stop into a check needs (Nov 27 audit)."""
     job = _open_job(state, job_id)
     if "gates" in body:
-        if not may_override and isinstance(body.get("gates"), dict):
-            now = job.get("paperwork_gates") or {}
-            if any(v == "soft" and (now.get(k) or default_gate(k)) == "hard" for k, v in body["gates"].items() if isinstance(k, str)):
-                raise GateError(GATE_PERM, fields={"gates": GATE_PERM})
-        _set_paperwork_gates(state, job, body.get("gates"), actor)
+        _set_paperwork_gates(state, job, body.get("gates"), actor, may_override)
         if not any(k in body for k in ("packet", "no_paperwork", "use_client")):
             _refresh_draft_gate(job, state)
             return job   # only the gates changed
     if job.get("packet"):
         raise GateError("This job's supporting documents were set up on an older pay app, so it can't have its own list.")
     before = _job_paperwork_view(state, job)
+    if not may_override:
+        # Taking a hard stop off the list lets a pay app go without it, as making it a check does
+        # (Nov 27 audit): the same permission. The conditional waiver is on every list (M16).
+        if body.get("use_client") is True:
+            payer = _payer(state, job["payer_id"])
+            new_labels = [] if payer.get("no_paperwork") else parse_packet_text(payer.get("packet", "")) or list(DEFAULT_PAPERWORK["GC" if payer.get("role") == "GC" else "Owner"])
+        else:
+            text = body.get("packet") if isinstance(body.get("packet"), str) else ""
+            new_labels = [] if body.get("no_paperwork") is True else parse_packet_text(text)
+        staying = {g["key"] for g in _gate_rows(job, new_labels)}
+        if any(g["gate"] == "hard" and g["key"] not in staying for g in before["gates"]):
+            raise GateError(OVERRIDE_PERM, fields={"packet": OVERRIDE_PERM})
     took_back = False
     if body.get("use_client") is True:
         job.pop("paperwork_labels", None)
@@ -5403,12 +5413,16 @@ def set_job_paperwork(state: dict[str, Any], job_id: str, body: dict[str, Any], 
     return job
 
 
-def _set_paperwork_gates(state: dict[str, Any], job: dict[str, Any], gates: Any, actor: str) -> bool:
+def _set_paperwork_gates(state: dict[str, Any], job: dict[str, Any], gates: Any, actor: str, may_override: bool = True) -> bool:
     """{key: "hard" | "soft"} for this job's documents (gate_key). Applies at once to a draft that
-    hasn't been sent, and to every pay app from here; a sent one stays as it went. Audited."""
+    hasn't been sent, and to every pay app from here; a sent one stays as it went. Audited.
+    Making a hard stop a check lets a pay app go without that document, so it takes the same
+    permission as overriding one (OVERRIDE_PERM); making a check a hard stop takes none."""
     if not isinstance(gates, dict) or len(gates) > 40 or any(not isinstance(k, str) or len(k) > 40 or v not in GATES for k, v in gates.items()):
         _refuse("Gates not saved.", {"gates": "Set each document to Required (hard stop) or Check (soft)."})
     now = dict(job.get("paperwork_gates") or {})
+    if not may_override and any(gate == "soft" and (now.get(key) or default_gate(key)) == "hard" for key, gate in gates.items()):
+        raise GateError(OVERRIDE_PERM, fields={"gates": OVERRIDE_PERM})
     changed = []
     for key, gate in gates.items():
         was = now.get(key) or default_gate(key)
@@ -5535,23 +5549,37 @@ def _add_ticket_item(job: dict[str, Any], invoice: dict[str, Any], payer: dict[s
     them (skip_packet_item; B7 of the Oct 30 review) gets the item as not needed, with the reason.
     Returns whether a required one was added."""
     covers = _work_billed_by_ticket(job, invoice)
-    packet = invoice.get("packet") or []
     if not covers:
         return False
+    if not isinstance(invoice.get("packet"), list):
+        invoice["packet"] = []
+    packet = invoice["packet"]   # the invoice's own list: an empty one is added to, not a copy
+    # Two items since Nov 26, as the client's lists are (_SPLIT_LABELS): each one the list already
+    # has takes the work it covers and the change-order hard stop; a missing one is added (Nov 27 audit).
+    has = set()
     for item in packet:
-        if (_record_kinds_for(item) or ("",))[0] in ("ticket", "time_sheet"):
+        name = (_record_kinds_for(item) or ("",))[0]
+        if name in ("ticket", "time_sheet"):
             item["covers"] = covers
             _ticket_gate(item, covers)
-            return False
-    item = _packet_item(invoice["id"], "ticket", TICKETS_AND_SHEETS, f"{TICKETS_AND_SHEETS} are missing.")
-    item["covers"] = covers
-    _ticket_gate(item, covers)
-    packet.append(item)
+            label = str(item.get("label") or "")
+            # By what its label names; an older combined item covers both, one with neither word its kind.
+            named = {k for k, words in (("ticket", r"ticket"), ("time_sheet", r"time ?sheet")) if re.search(words, label, re.I)}
+            has |= named or {name}
     skipped = (payer or {}).get("tickets_not_needed")
-    if skipped:
-        item.update(required=False, skipped_reason=skipped.get("reason") or "Not needed for this client", skipped_at=utcnow())
-        return False
-    return True
+    added = False
+    for kind, label in (("ticket", _SPLIT_LABELS[TICKETS_AND_SHEETS.lower()][0]), ("time_sheet", _SPLIT_LABELS[TICKETS_AND_SHEETS.lower()][1])):
+        if kind in has:
+            continue
+        item = _packet_item(invoice["id"], kind, label, f"{label} are missing.")
+        item["covers"] = covers
+        _ticket_gate(item, covers)
+        packet.append(item)
+        if skipped:
+            item.update(required=False, skipped_reason=skipped.get("reason") or "Not needed for this client", skipped_at=utcnow())
+        else:
+            added = True
+    return added
 
 
 def _kind_problem(has: str, needs: str) -> str:

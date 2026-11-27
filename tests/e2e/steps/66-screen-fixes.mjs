@@ -51,13 +51,16 @@ export default async function ({ browser, BASE, step, errors }) {
     const records = p.locator("details.job-records");
     if (await records.getAttribute("open") === null) await records.locator(":scope > summary").click();
     const group = p.locator('.record-group[data-group="conversation"]');
+    // Edit opens the New job record form with the record's own section (Nov 27 audit).
     await group.getByRole("button", { name: /^Edit / }).click();
-    const box = group.locator("textarea");
+    await p.getByRole("heading", { name: "Edit record" }).waitFor();
+    const box = p.locator("#daily-conversation-text-0");
     assert.equal(await box.inputValue(), "Check goes out Friday");
     await box.fill("Check goes out Monday");
-    await group.locator('[data-action="record-save"]').click();
+    await p.locator('[data-action="daily-save"]').click();
+    await p.waitForURL(`**/jobs/${job.id}`);
+    if (await records.getAttribute("open") === null) await records.locator(":scope > summary").click();
     await group.locator(".list-item", { hasText: "Check goes out Monday" }).waitFor();
-    assert.equal(await group.locator("textarea").count(), 0);
     const logged = await p.evaluate(async (id) => (await (await fetch(`/api/audit?job=${id}&limit=5`)).json()).entries.map(e => e.detail).join(" "), job.id);
     assert.match(logged, /from 'Check goes out Friday' to 'Check goes out Monday'/);
     await p.context().close();

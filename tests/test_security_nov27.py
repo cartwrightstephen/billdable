@@ -470,7 +470,8 @@ class DeletedCompanyQuickBooksTests(unittest.TestCase):
         self.assertIsNotNone(qbo.connection("co-kept"))
         self.assertNotIn("state-x", qbo._PENDING, "a Connect in progress can't finish")
         self.assertEqual(revoked, ["r1"])
-        self.assertNotIn("r1", (Path(self.tmp.name) / "qbo_connections.json").read_text())
+        # The file is keyed by company; "r1" alone could turn up inside the other company's random ciphertext.
+        self.assertEqual(list(json.loads((Path(self.tmp.name) / "qbo_connections.json").read_text())), ["co-kept"])
 
 
 class UpgradeBackupTests(unittest.TestCase):

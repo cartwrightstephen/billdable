@@ -106,6 +106,8 @@ JOB_ACTION_PERMS: dict[str, str | None] = {
     # (decision 2); approving a pay app is the named approvers' own permission (decision 8).
     "co-price": "manage_jobs", "payapp-approve": "approve_payapps",
     # Nov 27: earlier pay apps and retainage by line change the job's money; a release asks for retainage.
+    # Nov 27 audit: deleting a saved job record changes the job's records and field totals.
+    "record-delete": "manage_jobs",
     "earlier-payapps": "manage_jobs", "earlier-payapps-remove": "manage_jobs", "line-retainage": "manage_jobs",
     "retainage-release": "ask_retainage", "payapp-retainage": None,
     # Drafting, records, paperwork and follow-ups: everyone on the team.
@@ -114,7 +116,7 @@ JOB_ACTION_PERMS: dict[str, str | None] = {
     "resolve": None, "packet-skip": None, "packet-soft-check": None, "follow-up": None, "note-contact": None, "paperwork": None,
     "add-co": None, "request-co-signature": None,
     "attach": None, "detach": None, "add-evidence": None, "add-record": None, "attach-record": None, "packet-confirm": None, "packet-recheck": None,
-    "edit-record": None, "daily-record": None, "daily-record-edit": None, "dismiss-row": None, "pencil": None, "pencil-response": None,
+    "edit-record": None, "record-update": None, "daily-record": None, "daily-record-edit": None, "dismiss-row": None, "pencil": None, "pencil-response": None,
     "learn-rejection": None, "import-qbo": None,
     # Added on dev by the other streams of the Oct 29 review (anyone, as they shipped).
     "waiver-type": None, "record-work": None, "co-logged": None, "co-work-started": None,

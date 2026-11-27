@@ -480,6 +480,7 @@ export const ACTION_PERM = {
   done: "manage_jobs", "undo-done": "manage_jobs", edit: "manage_jobs", "approve-co": "manage_jobs", "withdraw-co": "manage_jobs", "include-co": "manage_jobs",
   "co-price": "manage_jobs", "payapp-approve": "approve_payapps",
   "earlier-payapps": "manage_jobs", "earlier-payapps-remove": "manage_jobs", "line-retainage": "manage_jobs", "retainage-release": "ask_retainage",
+  "record-delete": "manage_jobs",
 };
 
 // perms: {list: the signed-in person's permissions (me.perms)}; {owner: true} allows all.

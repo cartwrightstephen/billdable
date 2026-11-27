@@ -225,7 +225,7 @@ def production() -> bool:
 
 
 def demo_mode() -> str:
-    """DURACASH_DEMO: "on" (writable, the default outside production), "readonly" or "off".
+    """DURACASH_DEMO: "on" (writable, the default outside production and staging), "readonly" or "off".
     The demo's password is public, so production defaults to read-only: visitors can look
     around the sample company, and nothing can be changed, reset or locked. Set DURACASH_DEMO=off
     to remove it entirely."""
@@ -233,7 +233,10 @@ def demo_mode() -> str:
     if value in {"off", "readonly"}:
         return value
     # Default: writable outside production; readonly in production so the sample company
-    # is always available for prospects on the landing page.
+    # is always available for prospects on the landing page. Staging is public too, so its demo
+    # is read-only unless DURACASH_DEMO=on says otherwise (M9; render.yaml sets readonly as well).
+    if env_name() == "staging":
+        return "on" if value == "on" else "readonly"
     return "readonly" if production() else "on"
 
 
@@ -3582,6 +3585,7 @@ class Handler(BaseHTTPRequestHandler):
             # Every new job has a schedule of values: one lump-sum line until the person sets one.
             auto_schedule=True, schedule_lines=body.get("sov_lines"), schedule_op=body.get("sov_op_pct"),
         )
+        _zip_warning(ctx)
 
     def _m_job_action(self, state: dict, m, ctx: "Ctx") -> None:
         job_id, action, item = m.group(1), m.group(2), m.group(3)
@@ -3603,6 +3607,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _m_company_update(self, state: dict, m, ctx: "Ctx") -> None:
         domain.update_company(state, ctx.body, ctx.actor)
+        co = state.get("company") or {}
+        _zip_warning(ctx, {"state": co.get("state"), "zip": co.get("zip")})
 
     def _m_approvers(self, state: dict, m, ctx: "Ctx") -> None:
         """Who approves pay apps before they go (Round 2 decision 8): the company's list, or one
@@ -4406,6 +4412,16 @@ def _address_parts(body: dict) -> dict | None:
     return {k: _text(body, k, limit=200) for k in keys} if any(k in body for k in keys) else None
 
 
+def _zip_warning(c: "Ctx", parts: dict | None = None) -> None:
+    """A ZIP from another state is asked about, not refused (Nov 27 audit): the reply carries
+    warnings.zip with the page's own question, for an address saved by a script, an import or a
+    page that didn't ask. parts: the address's four boxes; else the body's, or its one-line address."""
+    parts = parts if parts is not None else (_address_parts(c.body) or domain.validate.split_address(_text(c.body, "address")) or {})
+    question = domain.validate.zip_state_question(parts.get("zip"), parts.get("state"))
+    if question:
+        c.reply.setdefault("warnings", {})["zip"] = question
+
+
 def _assignee(c: Ctx, user_id: str) -> tuple:
     """(id, name) of the team member a job is assigned to; someone not on the team is refused."""
     if not user_id:
@@ -4427,6 +4443,8 @@ def _edit_job(h, st, j, i, c):
     if "retainage_pct" in body:
         updates["retainage_pct"] = _number(body, "retainage_pct", "the retainage percent", 0)
     domain.edit_job(st, j, updates, c.actor)
+    if any(k in body for k in ("street", "city", "state", "zip", "address")):
+        _zip_warning(c)
 
 
 # Who may do what (S6): each person's permission profile (domain/profiles.py). Every job action
@@ -4621,6 +4639,8 @@ JOB_ACTIONS = {
     "daily-record": (False, lambda h, st, j, i, c: domain.save_job_record(st, j, _text(c.body, "notes"), c.actor, c.body, c.reply, gate_over=True)),
     # Edit on a saved job record (Nov 26): the same form, with the rows it saved (domain.update_job_record).
     "daily-record-edit": (True, lambda h, st, j, i, c: domain.update_job_record(st, j, i, _text(c.body, "notes"), c.actor, c.body, c.reply)),
+    "record-delete": (True, lambda h, st, j, i, c: domain.delete_record(st, j, i, c.actor)),
+    "record-update": (True, lambda h, st, j, i, c: domain.update_record(st, j, i, c.actor, c.body, c.reply, answerer=_answerer(c, st))),
     "attach": (True, lambda h, st, j, i, c: domain.add_packet_attachment(st, j, i, _text(c.body, "name"), c.actor, file_id=_text(c.body, "file_id"), read_file=_file_reader(c.company_id, c.read_ahead),
                                                                          looked=c.body.get("looked") is True, answer=_text(c.body, "answer"), answerer=_answerer(c, st))),
 }
@@ -4731,6 +4751,17 @@ def stop_on_sigterm(server: "Server") -> None:
     signal.signal(signal.SIGTERM, stop)
 
 
+def startup_warnings() -> list[str]:
+    """What production starts with but should be told about (L4, Nov 27 audit): the bounce webhook
+    (/api/mail-events/<MAIL_EVENTS_TOKEN>) on with only its token, no MAIL_EVENTS_PASSWORD. It stays
+    optional, as not every mail provider can send a password."""
+    out = []
+    if production() and os.environ.get("MAIL_EVENTS_TOKEN") and not os.environ.get("MAIL_EVENTS_PASSWORD"):
+        out.append("MAIL_EVENTS_PASSWORD is not set: the bounce webhook is checked by the token in its address alone. "
+                   "Set a password and give it to the mail provider as HTTP Basic auth.")
+    return out
+
+
 def main() -> None:
     # The server key (H3, vault.py): production and staging refuse to start without it; a laptop
     # makes one in the data directory.
@@ -4747,6 +4778,8 @@ def main() -> None:
     if production() and os.environ.get("DURACASH_ALLOW_NO_OFFSITE") == "1":
         for problem in recovery_problems():
             log_json("warn", msg=f"Starting anyway (DURACASH_ALLOW_NO_OFFSITE=1): {problem}")
+    for warning in startup_warnings():
+        log_json("warn", msg=warning)
     try:
         backup_before_upgrade()
     except Exception as exc:

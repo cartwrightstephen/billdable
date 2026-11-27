@@ -101,6 +101,17 @@ def configured() -> bool:
     return bool(s["client_id"] and s["client_secret"])
 
 
+# Before the server has its DocuSign keys (founders' decision, Nov 27): DocuSign still shows, and
+# pressing Connect or Sign with DocuSign says this, never an error, and nothing is signed.
+SWITCHING_ON = ("DocuSign is being switched on for your account. We'll email you when it's ready. "
+           "Until then, sign with your typed name \u2014 it's legally binding.")
+SWITCHING_ON_DEMO = "DocuSign is being switched on. Until then, sign with your typed name \u2014 it's legally binding."
+
+
+def pending_message(demo: bool = False) -> str:
+    return SWITCHING_ON_DEMO if demo else SWITCHING_ON
+
+
 # ----- the HTTP layer (tests replace HTTP with a stand-in; nothing else here opens a socket) -----
 
 def _http(method: str, url: str, headers: dict[str, str], body: bytes | None = None) -> tuple[int, dict[str, str], bytes]:
