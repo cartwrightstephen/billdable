@@ -407,9 +407,14 @@ function packetItemsHtml(j, inv, packet, isCloseout, pick = null) {
     const waiver = unesc(p.waiver_kind || "");
     const made = p.present_reason === "Produced by Duracash";
     const hasWaiting = !p.name_only && (p.attachments || []).some(a => a.unconfirmed);
+    // A check answered at Review & send isn't missing: checked is a tick, not needed a dash (Nov 27 hunt:
+    // a sent pay app showed "✗ Daily tickets" over "Checked: Dana Whitfield").
+    const answered = !p.present && !skipped && isSoft(p) && p.soft_check ? (p.soft_check.answer === "not_needed" ? "not_needed" : "checked") : "";
+    const mark = p.present || answered === "checked" ? "✓" : skipped || answered ? "–" : "✗";
+    const said = p.present ? "in" : skipped ? "not needed" : answered === "checked" ? "checked" : answered ? "not needed this time" : "missing";
     return `
-    <div class="list-item packet-item ${p.present || skipped ? "present" : "absent"}" id="packet-item-${p.id}" tabindex="-1">
-      <div><span class="mark" aria-hidden="true">${p.present ? "✓" : skipped ? "–" : "✗"}</span> <strong>${p.label}</strong> <span class="visually-hidden">${p.present ? "in" : skipped ? "not needed" : "missing"}</span>
+    <div class="list-item packet-item ${p.present || skipped || answered ? "present" : "absent"}" id="packet-item-${p.id}" tabindex="-1">
+      <div><span class="mark" aria-hidden="true">${mark}</span> <strong>${p.label}</strong> <span class="visually-hidden">${said}</span>
         ${gatePill(p, isCloseout)}
         ${!p.present && !skipped && !hasWaiting && !isSoft(p) ? `<span class="field-error">${p.blocker}</span>` : ""}
         ${!p.present && !skipped && isSoft(p) ? `<div class="sub">${p.soft_check ? softAnswerText(p) : "A check: asked at Review &amp; send, and the pay app can go without it."}</div>` : ""}

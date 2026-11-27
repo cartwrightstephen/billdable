@@ -37,3 +37,22 @@ test("with the team list here, a member no longer on the team comes back as Some
   assert.equal(p.draft.ts_name_0, "Alex Hartline");
   st.setTeamData(null);
 });
+
+test("a check answered at Review & send shows as checked or not needed, not as missing", async () => {
+  const paperwork = await import("../../static/js/views/paperwork.js");
+  const payer = { id: "p1", name: "Oak Builders" };
+  const inv = { id: "d1", status: "sent", packet: [
+    { id: "b", label: "Daily tickets", required: true, present: false, gate: "soft", soft_check: { answer: "checked", by: "Ana", at: "2026-11-27T12:00:00" } },
+    { id: "c", label: "Time sheets", required: true, present: false, gate: "soft", soft_check: { answer: "not_needed", by: "Ana", at: "2026-11-27T12:00:00" } },
+    { id: "d", label: "Progress photos", required: true, present: false, gate: "soft" },
+  ] };
+  const j = { ...job, payer, closed: false, invoices: [inv] };
+  core.setState({ company: { name: "Pine" }, jobs: [j], payers: [payer], inbox: [], daily_records: [], files: [], email_log: [] });
+  const html = paperwork.supportingDocsHtml(j, inv);
+  const row = (id) => html.slice(html.indexOf(`id="packet-item-${id}"`), html.indexOf("</strong>", html.indexOf(`id="packet-item-${id}"`)));
+  assert.match(row("b"), /class="mark" aria-hidden="true">✓</);
+  assert.match(row("c"), /class="mark" aria-hidden="true">–</);
+  assert.match(row("d"), /class="mark" aria-hidden="true">✗</);
+  assert.match(html, /<span class="visually-hidden">checked<\/span>/);
+  assert.match(html, /<span class="visually-hidden">not needed this time<\/span>/);
+});
