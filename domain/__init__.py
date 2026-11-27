@@ -5370,6 +5370,15 @@ def _work_billed_by_ticket(job: dict[str, Any], invoice: dict[str, Any]) -> list
     return list(dict.fromkeys(out))
 
 
+def _ticket_gate(item: dict[str, Any], covers: list[str]) -> None:
+    """Tickets and time sheets are a check (Stephen, Nov 26), unless the pay app bills change order
+    work: that is paid on them, so it is a hard stop whatever the job's setting."""
+    if any(c.startswith("CO ") for c in covers):
+        item["gate_fixed"] = "hard"
+    else:
+        item.pop("gate_fixed", None)
+
+
 def _add_ticket_item(job: dict[str, Any], invoice: dict[str, Any], payer: dict[str, Any] | None = None) -> bool:
     """A pay app billing change-order or unit-price work needs its daily tickets and time sheets
     (M6), when the client's list doesn't already ask for them. A client marked as not wanting
@@ -5382,11 +5391,11 @@ def _add_ticket_item(job: dict[str, Any], invoice: dict[str, Any], payer: dict[s
     for item in packet:
         if (_record_kinds_for(item) or ("",))[0] in ("ticket", "time_sheet"):
             item["covers"] = covers
-            item["gate_fixed"] = "hard"   # work billed by ticket is paid on them (M6)
+            _ticket_gate(item, covers)
             return False
     item = _packet_item(invoice["id"], "ticket", TICKETS_AND_SHEETS, f"{TICKETS_AND_SHEETS} are missing.")
     item["covers"] = covers
-    item["gate_fixed"] = "hard"
+    _ticket_gate(item, covers)
     packet.append(item)
     skipped = (payer or {}).get("tickets_not_needed")
     if skipped:

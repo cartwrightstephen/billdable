@@ -462,7 +462,8 @@ def clean_record_entries(job: dict[str, Any], raw: Any, actor: str = "", report:
                 continue
             if not said:
                 _refuse("", {name("text"): "Enter what was said, like \"Check goes out Friday\"."})
-            day = _next_on(job, entry.get("next_on"), name("next_on"))
+            # On Edit, a conversation saved before keeps its date as it was, even one gone by.
+            day = _next_on(job, entry.get("next_on"), name("next_on"), saved=bool(entry.get("record_id")))
             clean["note"] = said + (f" Check again {day.isoformat()}." if day else "")
             clean["conversation"] = {"text": said, "day": day}
         elif section == "invoices":
@@ -494,11 +495,14 @@ def clean_record_entries(job: dict[str, Any], raw: Any, actor: str = "", report:
     return out
 
 
-def _next_on(job: dict[str, Any], value: Any, field: str) -> "date | None":
+def _next_on(job: dict[str, Any], value: Any, field: str, saved: bool = False) -> "date | None":
     """A conversation's Check again on (as Log a conversation took it): today or later, and only
-    while a pay app waits for payment, since that is the follow-up it holds."""
+    while a pay app waits for payment, since that is the follow-up it holds. saved: a row saved
+    before, on Edit, whose date is only read back."""
     from domain import OPEN_FOR_PAYMENT, _day, _refuse
     day = _day(value, field, "Enter the date to check again, like 2026-11-07.")
+    if saved:
+        return day
     if day and day < datetime.now(timezone.utc).date() - timedelta(days=1):
         _refuse("", {field: "Enter today or a later date to check again."})
     if day and not any(inv["status"] in OPEN_FOR_PAYMENT for inv in job["invoices"]):

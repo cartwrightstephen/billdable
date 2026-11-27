@@ -46,7 +46,7 @@ export function jobFields(form, prefix, j = {}) {
     anticipated_end_on: f({ name: "anticipated_end_on", id: `${prefix}-end`, label: "Anticipated end date", type: "date", value: unesc(j.anticipated_end_on || ""), ...mark("anticipated_end_on") }),
     // The contract's pay period (Nov 26: "16th to the 15th" is 15). Blank: the client's pay app day, else the month's end.
     period_end_day: f({ name: "period_end_day", id: `${prefix}-period-end`, label: "Pay period ends on (day of the month)", inputmode: "numeric", autocomplete: "off",
-      value: j.period_end_day ? String(j.period_end_day) : "", placeholder: "15", help: "From the contract: 15 for a period from the 16th to the 15th. Blank uses the pay app day, else the month's end." }),
+      value: j.period_end_day ? String(j.period_end_day) : "", help: "From the contract: 15 for a period from the 16th to the 15th. Blank uses the pay app day, else the month's end." }),
   };
 }
 

@@ -115,11 +115,14 @@ class GateTests(unittest.TestCase):
         self.assertEqual(names("time sheets"), ["sheet.pdf"])
         self.assertEqual(names("daily tickets"), ["ticket.pdf"])
 
-    def test_work_billed_by_ticket_keeps_its_hard_stop(self):
-        packet = draft(self.job)["packet"]
-        sheet = next(p for p in packet if p["label"] == "Daily tickets")
-        sheet["gate_fixed"] = "hard"
-        self.assertEqual(domain.item_gate(self.job, sheet), "hard")
+    def test_tickets_are_a_hard_stop_only_for_change_order_work(self):
+        sheet = {"label": domain.TICKETS_AND_SHEETS, "kind": "ticket"}
+        domain._ticket_gate(sheet, ["Branch conduit"])
+        self.assertEqual(domain.item_gate(self.job, sheet), "soft", "unit-price work: a check")
+        domain._ticket_gate(sheet, ["Branch conduit", "CO 1"])
+        self.assertEqual(domain.item_gate(self.job, sheet), "hard", "change order work is paid on them")
+        domain._ticket_gate(sheet, ["Branch conduit"])
+        self.assertNotIn("gate_fixed", sheet)
 
 
 if __name__ == "__main__":
