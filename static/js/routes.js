@@ -9,7 +9,7 @@ export const DETAIL_PARENT = { job: "jobs", "payapp-new": "payapps", "payapp-det
 
 export const VIEW_PATHS = {
   dashboard: "/dashboard", calendar: "/dashboard/calendar",
-  jobs: "/jobs", daily: "/jobs/daily", history: "/jobs/history", playbook: "/jobs/clients",
+  jobs: "/jobs", daily: "/jobs/daily", history: "/jobs/history", playbook: "/jobs/clients", compliance: "/jobs/compliance",
   inbox: "/communications", outbox: "/communications/outbox",
   import: "/data/import", export: "/data/export",
   payapps: "/money", packets: "/money/packets", cos: "/money/change-orders", collections: "/money/collections",

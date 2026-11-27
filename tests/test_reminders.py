@@ -528,11 +528,11 @@ class Http(unittest.TestCase):
         cookie = self.signup("rem1@example.com")
         res, data = self.request("GET", "/api/reminders", cookie=cookie)
         self.assertEqual(res.status, 200)
-        self.assertEqual({k["key"] for k in data["kinds"]}, {"dates", "missing", "co_records"})
+        self.assertEqual({k["key"] for k in data["kinds"]}, {"dates", "missing", "co_records", "compliance"})
         # Someone new starts with each kind in the app, nothing by email or text (round 1, item 19).
         self.assertTrue(all(v == ["app"] for v in data["prefs"].values()))
         self.assertEqual((data["notifications"], data["unread"]), ([], 0))
-        res, data = self.request("POST", "/api/reminders/prefs", {"prefs": {"dates": [], "missing": [], "co_records": []}}, cookie=cookie)
+        res, data = self.request("POST", "/api/reminders/prefs", {"prefs": {"dates": [], "missing": [], "co_records": [], "compliance": []}}, cookie=cookie)
         self.assertTrue(all(v == [] for v in data["prefs"].values()))
         # A new job's client is complete, so what is missing here is the pay app's supporting documents.
         _, saved = self.request("POST", "/api/jobs", {"name": "Birch deck", "address": "5 Birch Rd", "customer": "Northline GC", "role": "GC", "approver": "Nia", "phone": "4045550177",

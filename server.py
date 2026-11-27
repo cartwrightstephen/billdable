@@ -38,6 +38,7 @@ import auth
 import backup
 import billing
 import calendar_feed
+import compliance
 import contract_import
 import doc_check
 import docusign
@@ -3717,6 +3718,89 @@ class Handler(BaseHTTPRequestHandler):
 
 
 
+    # ----- compliance documents and lien deadlines (Jobs, Compliance; compliance.py, liens.py) -----
+
+    def _compliance_view(self, company_id: str) -> dict:
+        return compliance.view(company_state(company_id))
+
+    def _g_compliance(self, m, user) -> None:
+        self._json(200, self._compliance_view(user["company_id"]))
+
+    def _m_compliance_doc_add(self, state: dict, m, ctx: "Ctx") -> None:
+        doc = compliance.add_doc(state, ctx.body, ctx.actor)
+        ctx.reply.update({"doc_id": doc["id"], "compliance": compliance.view(state)})
+
+    def _m_compliance_doc_update(self, state: dict, m, ctx: "Ctx") -> None:
+        compliance.update_doc(state, m.group(1), ctx.body, ctx.actor)
+        ctx.reply["compliance"] = compliance.view(state)
+
+    def _m_compliance_requirement_add(self, state: dict, m, ctx: "Ctx") -> None:
+        compliance.add_requirement(state, ctx.body, ctx.actor)
+        ctx.reply["compliance"] = compliance.view(state)
+
+    def _m_compliance_requirement_delete(self, state: dict, m, ctx: "Ctx") -> None:
+        compliance.delete_requirement(state, m.group(1), ctx.actor)
+        ctx.reply["compliance"] = compliance.view(state)
+
+    def _m_compliance_settings(self, state: dict, m, ctx: "Ctx") -> None:
+        compliance.set_remind_days(state, ctx.body, ctx.actor)
+        ctx.reply["compliance"] = compliance.view(state)
+
+    def _m_compliance_liens(self, state: dict, m, ctx: "Ctx") -> None:
+        compliance.set_job_liens(state, m.group(1), ctx.body, ctx.actor)
+        ctx.reply["compliance"] = compliance.view(state)
+
+    def _p_compliance_doc_delete(self, m, ctx: "Ctx") -> None:
+        """Delete a document and its file: the file leaves the disk once the change is saved."""
+        gone: list = []
+        status, payload = self._mutate(ctx.company_id, lambda state: gone.extend(compliance.delete_doc(state, m.group(1), ctx.actor)), ctx.user)
+        if status == 200:
+            importer.discard(ctx.company_id, gone)
+            payload = {**payload, "compliance": self._compliance_view(ctx.company_id)}
+        self._json(status, payload)
+
+    def _p_compliance_doc_file(self, m, user) -> None:
+        """A document's file as the raw body, its name in X-Filename (as the job record's uploads).
+        Written before the lock, as the Inbox's uploads; deleted again if the change is refused."""
+        filename = unquote(self.headers.get("X-Filename", "") or "upload")
+        data = self._read_raw(importer.MAX_FILE_BYTES)
+        user = self._session_user()
+        if not user:
+            self._json(401, {"error": "Sign in required."})
+            return
+        if not has_perm(user, "company"):
+            self._json(403, {"error": NO_PERMISSION})
+            return
+        company_id, actor = user["company_id"], user.get("name") or user.get("email") or "owner"
+        try:
+            compliance.find_doc(company_state(company_id), m.group(1))
+            meta = importer.store_bytes(company_id, filename, data, actor)
+        except domain.GateError as exc:
+            self._json(409, _gate(exc))
+            return
+        old: list = []
+        status, payload = self._mutate(company_id, lambda state: old.extend(compliance.attach_file(state, m.group(1), meta, actor)), user)
+        if status == 200:
+            importer.discard(company_id, old)
+            payload = {**payload, "compliance": self._compliance_view(company_id)}
+        else:
+            importer.discard(company_id, [meta])
+        self._json(status, payload)
+
+    def _g_compliance_doc_file(self, m, user) -> None:
+        """A document's file. A W-9 or certified payroll opens only for those with the company
+        permission (compliance.SENSITIVE_TYPES)."""
+        state = company_state(user["company_id"])
+        doc = next((d for d in (state.get("compliance") or {}).get("docs", []) if d["id"] == m.group(1)), None)
+        if not doc or not doc.get("file_id"):
+            self._json(404, {"error": "File not found."})
+            return
+        if compliance.is_sensitive_file(state, doc["file_id"]) and not has_perm(user, "company", state):
+            self._json(403, {"error": NO_PERMISSION})
+            return
+        self._serve_file(user["company_id"], state, doc["file_id"])
+
+
 # DocuSign's handlers (docusign_http.py) join the request handler.
 docusign_http.install(Handler, sys.modules[__name__])
 
@@ -3806,6 +3890,18 @@ ROUTES = [
     Route("POST", r"/api/team/profiles/([^/]+)", "_p_profile_save", "body", perm="team", owner=True),
     Route("POST", r"/api/team/profiles/([^/]+)/delete", "_p_profile_delete", "body", perm="team", owner=True),
     Route("POST", r"/api/team/admin", "_p_admin_hand_over", "body"),
+
+    # == stream: compliance ==
+    Route("GET", r"/api/compliance", "_g_compliance", "user"),
+    Route("GET", r"/api/compliance/docs/(" + compliance.DOC_ID + r")/file", "_g_compliance_doc_file", "user"),
+    Route("POST", r"/api/compliance/docs", "_m_compliance_doc_add", "mutate", perm="company"),
+    Route("POST", r"/api/compliance/docs/(" + compliance.DOC_ID + r")/file", "_p_compliance_doc_file", "user", perm="company"),
+    Route("POST", r"/api/compliance/docs/(" + compliance.DOC_ID + r")/delete", "_p_compliance_doc_delete", "body", perm="company"),
+    Route("POST", r"/api/compliance/docs/(" + compliance.DOC_ID + r")", "_m_compliance_doc_update", "mutate", perm="company"),
+    Route("POST", r"/api/compliance/requirements", "_m_compliance_requirement_add", "mutate", perm="company"),
+    Route("POST", r"/api/compliance/requirements/(" + compliance.REQ_ID + r")/delete", "_m_compliance_requirement_delete", "mutate", perm="company"),
+    Route("POST", r"/api/compliance/settings", "_m_compliance_settings", "mutate", perm="company"),
+    Route("POST", r"/api/compliance/liens/([^/]+)", "_m_compliance_liens", "mutate", perm="manage_jobs"),
 
     # pages and feeds
     Route("GET", r"/healthz", "_g_healthz"),

@@ -196,7 +196,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     assert.equal(new URL(p.url()).pathname, "/settings/account");
     // The card says Loading… under its heading until the reminders arrive: count once the boxes are in.
     await p.locator('#notifications input[data-reminder]').first().waitFor();
-    assert.equal(await p.locator('input[data-reminder][value="app"]:checked').count(), 3, "in the app, from the start");
+    assert.equal(await p.locator('input[data-reminder][value="app"]:checked').count(), 4, "in the app, from the start");
     assert.equal(await p.locator('input[data-reminder][value="email"]:checked, input[data-reminder][value="text"]:checked').count(), 0);
     // No phone yet: Text is refused under its box, and nothing is saved.
     const box = (kind, channel) => p.locator(`input[data-reminder="${kind}"][value="${channel}"]`);

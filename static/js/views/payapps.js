@@ -17,6 +17,7 @@ import { QBO_READY, qboCsvLink, OWNER_SENDS, emailUnconfirmed, confirmFirstHtml 
 import { shortPayCardHtml, owedText, emailFailed, sendsTo } from "./job.js";
 import { beforeYouSendHtml, supportingDocsHtml, missingDocsHtml, softChecksHtml, softWaiting } from "./paperwork.js";
 import { sendConfirmText } from "../payapp-text.js";
+import { complianceSendWarningHtml } from "./compliance.js";   // the soft gate: an expired COI the client needs (compliance stream)
 
 export { sendConfirmText, deleteDraftText } from "../payapp-text.js";
 import { paymentsListHtml, qboPushHtml, qboStatus, loadQboStatus } from "./payments.js";
@@ -299,6 +300,7 @@ export const views = {
         ${missingDocsHtml(j, inv)}
         ${softChecksHtml(j, inv)}
         ${beforeYouSendHtml(j, inv)}
+        ${complianceSendWarningHtml(j)}
         ${approvalHtml({ ...inv, job_id: j.id })}
         ${companyGapsHtml(state.company)}
         ${retainageZeroHtml(j)}
