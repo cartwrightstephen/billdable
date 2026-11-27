@@ -5,9 +5,9 @@ import assert from "node:assert/strict";
 export default async function ({ browser, page, BASE, step, signedInPage, confirmDialog, confirmIfAsked, errors, signIfAsked }) {
   await step("retainage is one line in Money, its rate; no Retainage card (Yusuf, 10 Nov)", async () => {
     await page.goto(BASE + "/jobs/job-turner");
-    const money = page.locator("details.money-file");
+    const money = page.locator(".money-file");
     await money.waitFor();
-    if (await money.getAttribute("open") === null) await money.locator(":scope > summary").click();
+    if (await money.getAttribute("open") === null && await money.locator(":scope > summary").count()) await money.locator(":scope > summary").click();
     assert.match(await money.locator(".retainage-rate").innerText(), /^Retainage\s+\d+(\.\d+)?%$/);
     assert.equal(await page.locator(".retainage-card").count(), 0);
     assert.equal(await page.getByText("Pay apps holding it").count(), 0);

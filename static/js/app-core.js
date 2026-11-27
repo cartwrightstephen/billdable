@@ -7,7 +7,7 @@ import { resetTrail, stepTrail, previousPage } from "./trail.js";
 import { FIELD_HELP, NAV_HELP, helpFor } from "./help.js";
 import { readJson, setNetBanner } from "./net.js";
 import { labelTables } from "./dom.js";
-import { refuseForm, clearForm, clearAllForms } from "./forms.js";
+import { refuseForm, clearForm, clearAllForms, askZipState } from "./forms.js";
 import { setBillingStyle, termText } from "./terms.js";
 import { state, me, currentView, currentJobId, currentDetailId, formOpen, setData, clearSession, onSessionEnd, setLocation, closeForms, pendingPath, pendingSearch, setPending, setCameraAsk, setTeamData, setDrawerOpen, setQueueExpanded, idleMinutes, setSignedOutNote } from "./state.js";
 import { startIdleWatch, stopIdleWatch, idleWatching } from "./idle.js";
@@ -502,6 +502,17 @@ export function finishHtml(root) {
   labelTables(root);
   decorateHelp(root);
   a11yPass(root);
+  askZipStates(root);
+}
+
+// Every form with an address asks, as soon as it is drawn, whether its ZIP fits its state: a
+// saved company address, a job filled in from a contract or a page drawn again with what was
+// typed (Nov 26 walkthrough: verify ZIP codes everywhere an address is entered). Typing asks
+// too (forms.js watchForms).
+function askZipStates(root) {
+  const forms = [...root.querySelectorAll("[data-form-key]")];
+  if (root.matches && root.matches("[data-form-key]")) forms.push(root);
+  for (const form of forms) if (form.querySelector('[data-rule="zip"]')) askZipState(form);
 }
 export const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 

@@ -84,7 +84,7 @@ export function recordGroupsHtml(j) {
 export function recordCardHtml(j, open = true) {
   return `<details class="card job-records" data-more="job-records"${open || editingRecord ? " open" : ""}>
         <summary><h2>Job records</h2><span class="sub">${recordSummary(j)}</span></summary>
-        ${j.closed ? "" : `<div class="form-inline"><button class="btn small" data-action="daily-for-job" data-id="${j.id}">New job record</button></div>`}
+        ${j.closed ? "" : `<div class="form-inline"><button class="btn" data-action="daily-for-job" data-id="${j.id}">New job record</button></div>`}
         ${recordGroupsHtml(j)}
       </details>
       `;

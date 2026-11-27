@@ -2,8 +2,8 @@
 // team's page). The Client playbook is in clients.js.
 import { esc, unesc, escDeep, fmtDate, fmtDateTime, words } from "../format.js";
 import { readJson, setNetBanner, postJson } from "../net.js";
-import { moreButton, askConfirm } from "../dom.js";
-import { field, formErrorLine, refuseForm, formValues, clearForm } from "../forms.js";
+import { moreButton, askConfirm, titleWithInfo } from "../dom.js";
+import { field, formErrorLine, refuseForm, formValues, clearForm, formDraft } from "../forms.js";
 import { US_STATES, checkFields } from "../validate.js";
 import { actionWords } from "../terms.js";
 import { jobFilterOptions, jobFilterShown } from "../jobs.js";
@@ -58,7 +58,8 @@ async function loadTeam() {
 
 // The Team page's data from a reply: people, open invites, profiles and the permission list.
 function teamOnly(d) {
-  return { users: d.users || [], invites: d.invites || [], profiles: d.profiles || [], permissions: d.permissions || [] };
+  return { users: d.users || [], invites: d.invites || [], profiles: d.profiles || [], permissions: d.permissions || [],
+    templates: d.templates || [], reminders: d.reminders || null };
 }
 
 async function teamPost(path, body, okMessage) {
@@ -91,19 +92,25 @@ function teamCardHtml() {
   const locked = inviteLocked(me, mailReady, DEMO_COMPANY_ID);
   const edit = manage && !isDemo;
   const mayChange = (u) => edit && u.id !== me.id && (ownerMe() || u.profile_id !== "owner");
+  // Notifications (Nov 26 walkthrough): those who manage the team see and set everyone's.
+  const notes = !!(teamData && teamData.reminders) && users.some(u => u.notifications);
+  const others = users.filter(mayChange);
   return `
-      <h2>Team</h2>
-      <div class="table-wrap"><table>
-        <tr><th>Name</th><th>Email</th><th>Profile</th><th>Joined</th><th></th></tr>
+      ${titleWithInfo("Team", "About the team", `<p>Each person's profile says what they can do. Those who manage the team change profiles, invite people and set anyone's notifications.</p>
+        ${notes ? `<p>When you set someone's notifications and they change them later on My account, their change applies, and this list shows what they changed.</p>` : ""}`)}
+      <div class="table-wrap"><table class="team-table">
+        <tr><th>Name</th><th>Email</th><th>Profile</th>${notes ? "<th>Notifications</th>" : ""}<th>Joined</th><th></th></tr>
         ${users.map(u => `<tr><td>${u.name}${u.id === me.id ? " (you)" : ""}${u.company_admin ? ` <span class="pill copper">Company Admin</span>` : ""}</td><td>${u.email}</td>
           <td>${mayChange(u) ? `<span class="form-inline"><select id="prof-${u.id}" aria-label="Profile for ${u.name}">${profileOptions(u.profile_id)}</select>
             <button class="btn small secondary" data-action="team-profile" data-user="${u.id}">Change</button></span>` : u.profile_name || words(u.role)}</td>
+          ${notes ? `<td class="team-notes">${notificationSummaryHtml(u.notifications, teamData.reminders, u.id === me.id)}${mayChange(u) && edit && !isDemo ? `<div><button class="btn small secondary" data-action="team-notes-edit" data-user="${u.id}" aria-label="Set notifications for ${u.name}">Set</button></div>` : ""}</td>` : ""}
           <td>${fmtDate(u.created_at)}</td>
           <td>${mayChange(u) && !u.company_admin ? `<button class="btn small secondary" data-action="team-remove" data-user="${u.id}" data-name="${u.name}">Remove</button>` : ""}</td></tr>`).join("")}
       </table></div>
+      ${notes && edit && others.length > 1 && !notesDraft ? `<p><button class="btn small secondary" data-action="team-notes-edit" data-user="*">Set notifications for everyone</button></p>` : ""}
+      ${notes && edit ? teamNotesEditorHtml(users) : ""}
       ${edit ? `
-        <h3>Invite someone</h3>
-        <p class="sub">They get an email with a link to join. Pick the profile that says what they can do; you can change it later.</p>
+        ${titleWithInfo("Invite someone", "About invites", "<p>They get an email with a link to join. Pick the profile that says what they can do; you can change it later.</p>", { level: 3 })}
         ${locked ? inviteLockHtml() : ""}
         <div data-form-key="invite">${formErrorLine("invite")}<div class="form-row">
           ${field({ form: "invite", name: "email", id: "invite-email", label: "Their email", type: "email", autocomplete: "off", wide: true, rule: "email" })}
@@ -114,6 +121,39 @@ function teamCardHtml() {
           <div class="copy-row"><code id="invite-link">${esc(lastInvite.link)}</code><button class="btn small secondary" data-action="copy" data-target="invite-link">Copy</button></div></div>` : ""}
         ${invites.length ? `<h3>Open invites</h3>${invites.map(i => `<div class="list-item">${i.email} · ${i.profile_name || i.role} · invited by ${i.invited_by} · expires ${fmtDate(i.expires_at)}
           <button class="btn small secondary" data-action="team-revoke" data-invite="${i.id}">Revoke</button></div>`).join("")}` : ""}` : ""}`;
+}
+
+// One person's notifications on the Team page (Nov 26 walkthrough): how they reach them, then who
+// set them, or what the person changed since. n: the server's reminders.team_view, escaped; r: the
+// kinds and channels. Exported for the tests.
+export function notificationSummaryHtml(n, r, self = false) {
+  if (!n || !r) return "";
+  const label = Object.fromEntries(r.channels.map(([k, v]) => [k, v]));
+  const used = r.channels.map(([k]) => k).filter(k => r.kinds.some(kind => (n.prefs[kind.key] || []).includes(k)));
+  const how = used.length ? used.map(k => label[k]).join(", ") : "None";
+  const textWaits = used.includes("text") && !n.texts_on ? ` <span class="sub">(texts wait until they agree on My account)</span>` : "";
+  const status = n.changed && n.changed.length
+    ? `<div class="sub notes-changed"><span class="pill amber">Changed by them</span> ${n.changed.map(c => c.words).join("; ")}</div>`
+    : self ? `<div class="sub">Yours, on <button class="linkish" data-action="nav" data-view="account">My account</button></div>`
+    : n.set_by ? `<div class="sub">As ${n.set_by} set them</div>` : `<div class="sub">Their own choice</div>`;
+  return `<div>${how}${textWaits}</div>${status}`;
+}
+
+// The notifications being set from the Team page: {ids, who, prefs} while open.
+let notesDraft = null;
+function teamNotesEditorHtml(users) {
+  const r = teamData && teamData.reminders;
+  if (!notesDraft || !r) return "";
+  const targets = users.filter(u => notesDraft.ids.includes(unesc(u.id)));
+  const noTexts = targets.filter(u => u.notifications && !u.notifications.texts_on).map(u => u.name);
+  return `<div class="card team-notes-form" id="team-notes-form" data-form-key="teamnotes">${formErrorLine("teamnotes")}
+    <h3>Notifications for ${notesDraft.who}</h3>
+    ${r.kinds.map(k => `<fieldset class="reminder-kind"><legend><strong>${k.label}</strong></legend>
+      ${r.channels.map(([c, words]) => `<label class="terms-check"><input type="checkbox" data-team-reminder="${k.key}" value="${c}"${(notesDraft.prefs[unesc(k.key)] || []).includes(unesc(c)) ? " checked" : ""}> ${words}</label>`).join("")}
+    </fieldset>`).join("")}
+    ${noTexts.length ? `<p class="sub">Texts wait until ${noTexts.join(", ")} ${noTexts.length === 1 ? "adds a mobile number and agrees" : "add a mobile number and agree"} to texts on My account.</p>` : ""}
+    <div class="form-inline"><button class="btn" data-action="team-notes-save">Save notifications</button><button class="btn secondary" data-action="team-notes-cancel">Cancel</button></div>
+  </div>`;
 }
 
 // What each profile may do, one column each (S6). Owner holds everything and is locked; Member
@@ -137,8 +177,15 @@ function profilesCardHtml() {
 function profileFormHtml(perms) {
   const d = profileDraft;
   const member = d.id === "member";
+  // Starting templates (Nov 26 walkthrough): Owner, Accountant or office, Project manager,
+  // Superintendent, Field. Picking one fills the boxes; everything stays editable.
+  const templates = (teamData && teamData.templates) || [];
+  const picked = templates.find(t => unesc(t.id) === d.template);
   return `<div class="card profile-form" data-form-key="profile">${formErrorLine("profile")}
     <h3>${d.id ? `Edit ${esc(d.name)}` : "New profile"}</h3>
+    ${!d.id && templates.length ? `<div class="profile-templates"><span class="field-label" id="profile-template-label">Start from</span>
+      <div class="seg" role="group" aria-labelledby="profile-template-label">${templates.map(t => `<button type="button" class="btn small${d.template === unesc(t.id) ? "" : " secondary"}" data-action="profile-template" data-template="${t.id}" aria-pressed="${d.template === unesc(t.id)}">${t.name}</button>`).join("")}</div>
+      ${picked ? `<p class="sub">${picked.about} Change any box before you save.</p>` : ""}</div>` : ""}
     ${member ? `<p class="sub">Member is built in: its name stays, its permissions can change.</p>` : `<div class="form-grid">${field({ form: "profile", name: "name", id: "profile-name", label: "Name", value: d.name || "", placeholder: "Office manager", required: true })}</div>`}
     <fieldset class="perm-list"><legend>It can</legend>
       ${perms.map(k => `<label class="terms-check"><input type="checkbox" data-perm="${k.key}"${(d.perms || []).includes(unesc(k.key)) ? " checked" : ""}> ${k.words}</label>`).join("")}
@@ -154,8 +201,8 @@ function adminCardHtml() {
   const admin = (teamData.users || []).find(u => u.company_admin);
   const owners = (teamData.users || []).filter(u => u.profile_id === "owner" && !u.company_admin);
   const mine = admin && admin.id === me.id;
-  return `<h2>Company Admin</h2>
-    <p class="sub">${admin ? `${admin.name}${mine ? " (you)" : ""} is the Company Admin` : "No Company Admin yet"}: an owner who can also delete the company. ${mine ? "You can hand the role to another owner." : ""}</p>
+  return `${titleWithInfo("Company Admin", "About the Company Admin", "<p>The Company Admin is an owner who can also delete the company. They can hand the role to another owner.</p>")}
+    <p class="sub">${admin ? `${admin.name}${mine ? " (you)" : ""} is the Company Admin.` : "No Company Admin yet."}</p>
     ${mine ? owners.length ? `<div class="form-inline">
         <label for="admin-to" class="inline-label">Hand it to</label>
         <select id="admin-to">${owners.map(u => `<option value="${u.id}">${u.name}</option>`).join("")}</select>
@@ -172,10 +219,10 @@ function companySwitchesHtml(owner) {
   const on = (key, saved) => (key in switchDraft ? switchDraft[key] : saved);
   const box = (key, checked, label, help) => `<label class="terms-check switch-row"><input type="checkbox" id="sw-${key}" data-company-switch="${key}"${checked ? " checked" : ""}${owner ? "" : " disabled"}> <span><strong>${label}</strong><br><span class="sub">${help}</span></span></label>`;
   return `<div class="card" id="switches-card">
-      <h2>Sending and email</h2>
+      ${owner ? titleWithInfo("Sending and email", "About sending", `<p>Who can send pay apps, waivers and retainage requests is set by each person's profile, on <button class="linkish" data-action="nav" data-view="team">Team</button>.</p>`) : "<h2>Sending and email</h2>"}
       ${box("daily_email", on("daily_email", co.daily_email !== false), "Daily email of what's due",
         "Each morning owners get one email listing what's due today, with a link to each. Nothing is sent on a day with nothing due.")}
-      ${owner ? `<p class="sub">Who can send pay apps, waivers and retainage requests is set by each person's profile, on <button class="linkish" data-action="nav" data-view="team">Team</button>.</p>` : `<p class="sub">Your profile doesn't include changing these.</p>`}
+      ${owner ? "" : `<p class="sub">Your profile doesn't include changing these.</p>`}
     </div>`;
 }
 
@@ -418,14 +465,13 @@ function billingView() {
     <h1>Billing</h1>
     ${trialBannerHtml()}
     ${!isDemo && owner && billingInfo && billingInfo.configured ? `<div class="card" id="billing">
-      <h2>Billing</h2>
+      ${titleWithInfo("Billing", "About billing", `<p>Charged on the ${ordinal(Number(billingInfo.billing_day) || 5)} of each month, after your own pay apps are out. Payment by card through Stripe. Duracash never stores the card.</p><p>Nothing is ever deleted for an unpaid bill; at worst the account becomes read-only.</p>`)}
       ${billingInfo.status ? `<p class="sub"><span class="pill ${["active", "trialing"].includes(billingInfo.status) ? "green" : "red"}">${BILLING_WORDS[billingInfo.status] || words(billingInfo.status)}</span>${billingInfo.period_end ? ` Next renewal ${fmtDate(new Date(billingInfo.period_end * 1000).toISOString())}.` : ""}</p>`
         : `<p class="sub">No subscription yet. The free trial still applies: the first charge comes when it ends.</p>`}
       ${billingInfo.warning ? `<p class="blocker">${billingInfo.warning}</p>` : ""}
       <div class="form-inline">${billingInfo.has_customer && billingInfo.status && !["canceled", "incomplete_expired"].includes(billingInfo.status)
         ? `<button class="btn" data-action="billing-portal">Manage billing</button>` : `<button class="btn" data-action="billing-checkout">Subscribe</button>`}</div>
       ${billingInfo.partner ? `<p class="sub"><span class="pill copper">Design partner</span> The design-partner price applies.</p>` : ""}
-      <p class="sub">Charged on the ${ordinal(Number(billingInfo.billing_day) || 5)} of each month, after your own pay apps are out. Payment by card through Stripe. Duracash never stores the card. Nothing is ever deleted for an unpaid bill; at worst the account becomes read-only.</p>
     </div>` : ""}
   `;
 }
@@ -443,7 +489,7 @@ export function trialBannerHtml() {
 
 // Signed out: what one person had open in Settings isn't kept for the next.
 export function forgetSettings() {
-  twoStepSetup = null; recoveryCodes = null; lastInvite = null; adminCompanies = null; switchDraft = {}; codeSentTo = ""; profileDraft = null;
+  twoStepSetup = null; recoveryCodes = null; lastInvite = null; adminCompanies = null; switchDraft = {}; codeSentTo = ""; profileDraft = null; notesDraft = null;
   helperReview = null; helperDraft = null; auditJobFilter = "all"; auditWho = "";
 }
 onSessionEnd(forgetSettings);
@@ -677,7 +723,45 @@ export const actions = {
     const pick = document.getElementById(`prof-${el.dataset.user}`);
     if (pick) await teamPost(`/api/team/${el.dataset.user}/role`, { profile_id: pick.value }, "Profile changed.");
   },
-  "profile-new": () => { profileDraft = { id: null, name: "", perms: [] }; clearForm("profile"); render(); document.getElementById("profile-name")?.focus(); },
+  "profile-new": () => { profileDraft = { id: null, name: "", perms: [], template: "" }; clearForm("profile"); render(); document.getElementById("profile-name")?.focus(); },
+  // A starting template fills the boxes and, unless a name of their own was typed, the name.
+  "profile-template": (el) => {
+    const t = ((teamData && teamData.templates) || []).find(x => unesc(x.id) === unesc(el.dataset.template || ""));
+    if (!t || !profileDraft) return;
+    const typed = (formValues("profile").name || "").trim();
+    const names = teamData.templates.map(x => unesc(x.profile_name));
+    if (!typed || names.includes(typed)) (formDraft.profile ||= {}).name = unesc(t.profile_name);
+    profileDraft = { ...profileDraft, template: unesc(t.id), perms: t.perms.map(unesc) };
+    render();
+  },
+  // Notifications set from the Team page (Nov 26 walkthrough): one person, or everyone you can change.
+  "team-notes-edit": (el) => {
+    const users = (teamData && teamData.users) || [];
+    const mine = (u) => u.id !== me.id && (ownerMe() || u.profile_id !== "owner");
+    if (el.dataset.user === "*") {
+      const kinds = ((teamData.reminders || {}).kinds || []).map(k => unesc(k.key));
+      notesDraft = { ids: users.filter(mine).map(u => unesc(u.id)), who: "everyone you can change", prefs: Object.fromEntries(kinds.map(k => [k, ["app"]])) };
+    } else {
+      const u = users.find(x => x.id === el.dataset.user);
+      if (!u || !u.notifications) return;
+      notesDraft = { ids: [unesc(u.id)], who: u.name, prefs: Object.fromEntries(Object.entries(u.notifications.prefs).map(([k, v]) => [unesc(k), v.map(unesc)])) };
+    }
+    clearForm("teamnotes");
+    render();
+    document.getElementById("team-notes-form")?.scrollIntoView?.({ block: "nearest" });
+  },
+  "team-notes-cancel": () => { notesDraft = null; clearForm("teamnotes"); render(); },
+  "team-notes-save": async () => {
+    if (!notesDraft) return;
+    const kinds = ((teamData.reminders || {}).kinds || []).map(k => unesc(k.key));
+    const prefs = Object.fromEntries(kinds.map(k => [k, [...document.querySelectorAll(`input[data-team-reminder="${k}"]:checked`)].map(b => b.value)]));
+    const r = await postJson("/api/team/reminders", { user_ids: notesDraft.ids, prefs });
+    if (!r.ok) { refuseForm("teamnotes", { _form: r.data.error || "Not saved." }); return; }
+    setTeamData(escDeep(teamOnly(r.data)));
+    notesDraft = null; clearForm("teamnotes");
+    toast("Notifications saved. If they change them later, theirs apply and this list shows it.");
+    render();
+  },
   "profile-edit": (el) => {
     const p = (teamData.profiles || []).find(x => x.id === el.dataset.profile);
     if (!p) return;

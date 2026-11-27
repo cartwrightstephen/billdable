@@ -378,6 +378,12 @@ window.addEventListener("popstate", () => {
 });
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && drawerOpen) { setDrawerOpen(false); render(); document.getElementById("menu-btn")?.focus(); }
+  // An open (i) explanation closes with Escape, back on its (i).
+  if (e.key === "Escape") document.querySelectorAll(".info-pop[open]").forEach(d => { d.open = false; d.querySelector("summary")?.focus(); });
+});
+// ... and with a tap anywhere outside it, as a popover does.
+document.addEventListener("click", (e) => {
+  document.querySelectorAll(".info-pop[open]").forEach(d => { if (!d.contains(e.target)) d.open = false; });
 });
 
 // Installable on a phone (manifest + a service worker that caches nothing), so photos and

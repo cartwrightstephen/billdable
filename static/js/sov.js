@@ -168,7 +168,7 @@ export function sovProgressHtml(j, periodHtml = "", errorLine = "", extra = "") 
     <tr>
       <td>${l.item}</td><td class="sov-desc-cell">${l.description}</td>
       <td class="num">${l.lump_sum ? "lump sum" : fmtQty(l.qty_milli) + " " + l.unit}</td>
-      <td data-label="${doneLabel(l)}"><input id="sovp-done-${l.id}" class="sov-in sov-num" data-sovp="${l.id}" data-lump="${l.lump_sum ? 1 : 0}" data-field="done_${l.id}" value="${typed(`done_${l.id}`, String(l.lump_sum ? +(start / 10).toFixed(1) : start / 1000))}" inputmode="decimal" aria-label="${l.description}: ${l.lump_sum ? "% done to date" : "done to date"}" ${closed ? "disabled" : ""}> ${l.lump_sum ? "%" : l.unit}</td>
+      <td data-label="${doneLabel(l)}">${l.lump_sum ? `<span class="with-suffix inline">` : ""}<input id="sovp-done-${l.id}" class="sov-in sov-num" data-sovp="${l.id}" data-lump="${l.lump_sum ? 1 : 0}" data-field="done_${l.id}" value="${typed(`done_${l.id}`, String(l.lump_sum ? +(start / 10).toFixed(1) : start / 1000))}" inputmode="decimal" aria-label="${l.description}: ${l.lump_sum ? "% done to date" : "done to date"}" ${closed ? "disabled" : ""}>${l.lump_sum ? `<span class="suffix" aria-hidden="true">%</span></span>` : " " + l.unit}</td>
       <td><input id="sovp-stored-${l.id}" class="sov-in sov-num" data-sovs="${l.id}" data-field="stored_${l.id}" value="${typed(`stored_${l.id}`, l.stored_cents ? (l.stored_cents / 100).toFixed(2) : "")}" inputmode="decimal" aria-label="${l.description}: materials stored, dollars" ${closed ? "disabled" : ""}></td>
       <td class="sub">${l.billed_qty_milli ? `billed ${l.lump_sum ? (l.billed_qty_milli / 10).toFixed(1) + "%" : fmtQty(l.billed_qty_milli)}` : ""}</td>
     </tr>`; }).join("");

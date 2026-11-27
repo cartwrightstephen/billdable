@@ -161,8 +161,8 @@ function sectionHtml(key, j) {
         <tr><th>Item</th><th>Description</th><th>Done so far</th><th>${allLump ? "% done to date" : anyLump ? "Today, or % done to date" : "Today"}</th></tr>
         ${lines.map(l => `<tr><td>${l.item}</td><td class="sov-desc-cell">${l.description}</td>
           <td class="num">${lumpSum(l) ? `${+(l.done_milli / 10).toFixed(1)}%` : `${fmtQty(l.done_milli)} of ${fmtQty(l.qty_milli)} ${l.unit}`}</td>
-          <td data-label="${lumpSum(l) ? "% done to date" : `Today (${l.unit})`}"><input class="sov-in sov-num" id="daily-qty-${l.id}" data-field="qty_${l.id}" value="${typed(`qty_${l.id}`)}" inputmode="decimal"
-            aria-label="${l.description}: ${lumpSum(l) ? "% done to date" : `${l.unit} put in place today`}"> ${lumpSum(l) ? "%" : l.unit}${errSpan(`daily-qty-${l.id}`, `qty_${l.id}`)}</td></tr>`).join("")}
+          <td data-label="${lumpSum(l) ? "% done to date" : `Today (${l.unit})`}">${lumpSum(l) ? `<span class="with-suffix inline">` : ""}<input class="sov-in sov-num" id="daily-qty-${l.id}" data-field="qty_${l.id}" value="${typed(`qty_${l.id}`)}" inputmode="decimal"
+            aria-label="${l.description}: ${lumpSum(l) ? "% done to date" : `${l.unit} put in place today`}">${lumpSum(l) ? `<span class="suffix" aria-hidden="true">%</span></span>` : " " + l.unit}${errSpan(`daily-qty-${l.id}`, `qty_${l.id}`)}</td></tr>`).join("")}
       </table></div>` : `<p class="sub">Every line is done.</p>`}
     </div>`;
   }

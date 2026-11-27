@@ -142,7 +142,10 @@ test("on a phone Money, the schedule, supporting documents, job records and acti
   assert.match(reg.views.job(), /<details class="card money-file" data-more="job-money" open>/);
   delete core.moreDetails["job-money"];
   phone(false);
-  assert.match(reg.views.job(), /<details class="card money-file" data-more="job-money" open>/, "desktop: open");
+  // Nov 26 walkthrough: a wider screen has no fold on Money, so no arrow and no empty box.
+  const wide = reg.views.job();
+  assert.match(wide, /<section class="card money-file" aria-labelledby="money-h"><h2 id="money-h">Money<\/h2>/, "desktop: a plain card");
+  assert.doesNotMatch(wide, /<details class="card money-file"/);
 });
 
 test("Activity shows 5 entries, then Show all", () => {

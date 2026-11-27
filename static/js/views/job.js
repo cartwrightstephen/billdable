@@ -116,7 +116,7 @@ function progressFormHtml(j, openDraft, lump = null) {
   if (lump && progressMode === "percent") progressMode = "period";
   const mode = (key, label) => `<button class="${progressMode === key ? "btn" : "btn secondary"} small" data-action="progress-mode" data-mode="${key}" aria-pressed="${progressMode === key}">${label}</button>`;
   const input = progressMode === "percent"
-    ? field({ form: "progress", name: "percent", id: "progress-pct", label: "% complete", inputmode: "decimal", help: "How much of the whole contract is done." })
+    ? field({ form: "progress", name: "percent", id: "progress-pct", label: "% complete", suffix: "%", inputmode: "decimal", help: "How much of the whole contract is done." })
     : progressMode === "total"
       ? moneyField({ form: "progress", name: "completed_cents", id: "progress-amt", label: "Total done so far ($)", help: "All the work done to date, not just this draw." })
       : moneyField({ form: "progress", name: "period_cents", id: "progress-draw", label: "This draw ($)", help: "The work done since the last pay app, before retainage." });
@@ -321,7 +321,7 @@ export const views = {
           <p class="sub">${statusPill(j)} ${j.code} · ${j.address} · ${j.payer.name} <span class="client-type">${clientTypeLabel(j.payer)}</span></p>
         </div>
         ${j.closed ? (may("reopen") && !formOpen.reopen ? `<button class="btn secondary small" data-action="toggle-form" data-form="reopen" aria-expanded="false">Add more work</button>` : "")
-          : `<div class="form-inline"><button class="btn secondary small" data-action="daily-for-job" data-id="${j.id}">New job record</button>
+          : `<div class="form-inline"><button class="btn secondary" data-action="daily-for-job" data-id="${j.id}">New job record</button>
           ${may("edit") ? `<button class="btn secondary small" data-action="toggle-form" data-form="editjob" aria-expanded="${!!formOpen.editjob}">${formOpen.editjob ? "Cancel" : "Edit job"}</button>` : ""}</div>`}
       </div>`;
     // A finished job is its job file (J9): what it came to, its papers and its activity. Add more
@@ -404,7 +404,7 @@ export const views = {
           ${formOpen.overbilled ? `<div data-form-key="overbilled">${formErrorLine("overbilled")}<div class="form-inline"><input id="overbilled-reason" data-field="reason" value="${esc(draftValue("overbilled", "reason"))}" placeholder="What was done, like refund check 1044" aria-label="What was done about the overbilling" class="grow"><button class="btn small" data-action="overbilling-settled" data-id="${j.id}">Save</button></div></div>` : ""}
         </section>` : ""}
       <div class="detail-grid">
-        ${moneyCardHtml(j, foldOpen("job-money"))}
+        ${moneyCardHtml(j, foldOpen("job-money"), onPhone())}
         <div class="card">
           <h2>${termText("Pay apps")}</h2>
           ${j.invoices.length ? j.invoices.filter(i => !i.replaced).map(i => {  // a draft replaced by a progress correction stays in the history only
