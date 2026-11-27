@@ -14,7 +14,7 @@ from domain import profiles
 from test_accounts import ServerCase
 from test_team import TeamHttpTests
 
-ALL_EMAIL = {"dates": ["app", "email"], "missing": ["app", "email"], "co_records": ["app", "email"]}
+ALL_EMAIL = {"dates": ["app", "email"], "missing": ["app", "email"], "co_records": ["app", "email"], "compliance": ["app", "email"]}
 
 
 class TeamNotificationsTests(ServerCase):
@@ -58,7 +58,7 @@ class TeamNotificationsTests(ServerCase):
     def test_a_text_set_by_the_owner_waits_for_the_person_and_doesn_t_block_their_save(self):
         owner, _ = self.signup("owner@texts.example", "Texts Co")
         member, sam = self.join(owner, "sam@texts.example")
-        prefs = {"dates": ["app", "text"], "missing": ["app"], "co_records": ["app"]}
+        prefs = {"dates": ["app", "text"], "missing": ["app"], "co_records": ["app"], "compliance": ["app"]}
         res, out = self.request("POST", "/api/team/reminders", {"user_ids": [sam["id"]], "prefs": prefs}, cookie=owner)
         self.assertEqual(res.status, 200, out)
         self.assertFalse({u["email"]: u for u in out["users"]}["sam@texts.example"]["notifications"]["texts_on"])
@@ -95,6 +95,33 @@ class TeamNotificationsTests(ServerCase):
         res, out = self.request("POST", "/api/team/reminders", {"user_ids": [], "prefs": ALL_EMAIL}, cookie=owner)
         self.assertEqual(res.status, 400, out)
 
+    def test_compliance_and_lien_dates_is_in_the_editor_and_the_defaults(self):
+        # Integration (Nov 27): the compliance stream's reminder kind sits with the others on the
+        # Team page's kinds x channels editor, in a new person's defaults, and for people whose
+        # choices were saved before it existed it counts as in the app on both sides of the diff.
+        import auth
+        owner, _ = self.signup("owner@comp.example", "Comp Co")
+        _, ana = self.join(owner, "ana@comp.example")
+        users, out = self.team(owner)
+        self.assertIn(("compliance", "Compliance and lien dates"), [(k["key"], k["label"]) for k in out["reminders"]["kinds"]])
+        self.assertEqual(users["ana@comp.example"]["notifications"]["prefs"]["compliance"], ["app"])
+        self.assertEqual(set(auth.NEW_USER_REMINDERS), set(reminders.KINDS), "a new person gets every kind")
+        self.assertTrue(all(auth.NEW_USER_REMINDERS[k] == v for k, v in reminders.KIND_DEFAULTS.items()))
+        # Set from the Team page with compliance email on, and then by the person: the diff names it.
+        res, out = self.request("POST", "/api/team/reminders", {"user_ids": [ana["id"]], "prefs": {"compliance": ["app", "email"]}}, cookie=owner)
+        self.assertEqual(res.status, 200, out)
+        row = {u["email"]: u for u in out["users"]}["ana@comp.example"]["notifications"]
+        self.assertEqual((row["prefs"]["compliance"], row["changed"]), (["app", "email"], []))
+        # An account saved before the kind existed (no "compliance" key), set by the team then too.
+        auth_data = auth._load()
+        user = next(u for u in auth_data["users"] if u["id"] == ana["id"])
+        old = {"dates": ["app"], "missing": ["app"], "co_records": ["app"]}
+        user["reminders"], user["reminders_team"] = dict(old), {"prefs": dict(old), "by": "Pat", "by_id": "x", "at": "2026-11-01T00:00:00+00:00"}
+        auth._save(auth_data)
+        users, _ = self.team(owner)
+        notes = users["ana@comp.example"]["notifications"]
+        self.assertEqual((notes["prefs"]["compliance"], notes["changed"]), (["app"], []), "in the app by default; not a change by them")
+
 
 class ChangesTests(unittest.TestCase):
     def test_changes_lists_each_channel_turned_on_or_off(self):
@@ -103,6 +130,9 @@ class ChangesTests(unittest.TestCase):
         self.assertEqual([c["words"] for c in reminders.changes(team, mine)],
                          ["Email off for Important dates", "Text on for Missing information"])
         self.assertEqual(reminders.changes(None, mine), [], "never set by the team: nothing to compare")
+        # A kind added after the team set them counts as its default (compliance: in the app).
+        self.assertEqual(reminders.changes(team, {**mine, "compliance": ["app"]})[2:], [])
+        self.assertEqual([c["words"] for c in reminders.changes(team, {**mine, "compliance": []})][2:], ["In the app off for Compliance and lien dates"])
 
 
 class TemplateTests(unittest.TestCase):

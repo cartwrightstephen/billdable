@@ -113,7 +113,8 @@ def changes(team: dict[str, list[str]] | None, prefs: dict[str, list[str]]) -> l
         return []
     out = []
     for kind, (label, _) in KINDS.items():
-        was, now = set(team.get(kind) or []), set(prefs.get(kind) or [])
+        # A kind added since the team set them (compliance) counts as its default on both sides.
+        was, now = set(_chosen(team, kind)), set(_chosen(prefs, kind))
         for channel, words in CHANNELS.items():
             if (channel in was) != (channel in now):
                 on = channel in now
@@ -125,7 +126,7 @@ def changes(team: dict[str, list[str]] | None, prefs: dict[str, list[str]]) -> l
 def team_view(person: dict[str, Any]) -> dict[str, Any]:
     """One person's line on the Team page, for someone who manages the team: their choices, the
     team's last setting (who, when) and what they changed since. person: auth.team_reminders'."""
-    prefs = {kind: list(person.get("prefs", {}).get(kind) or []) for kind in KINDS}
+    prefs = {kind: _chosen(person.get("prefs") or {}, kind) for kind in KINDS}   # as they apply (KIND_DEFAULTS)
     team = person.get("team")
     return {"prefs": prefs, "set_by": team.get("by", "") if team else "", "set_at": team.get("at", "") if team else "",
             "changed": changes(team.get("prefs") if team else None, prefs), "texts_on": bool(person.get("texts_on"))}
