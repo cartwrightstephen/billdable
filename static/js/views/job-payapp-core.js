@@ -40,7 +40,7 @@ function lineBoxes(j, form) {
     <tr><th>Item</th><th>Description</th><th>Scheduled value</th><th>Billed before</th><th>${head}</th></tr>
     ${lines.map(l => `<tr><td>${l.item}</td><td class="sov-desc-cell">${l.description}</td><td class="num">${money(l.scheduled_cents)}</td>
       <td class="num">${money(l.billed_cents || 0)}</td>
-      <td><input id="ep-line-${l.id}" class="sov-in sov-num" data-field="line_${l.id}" value="${esc(draftValue(form, `line_${l.id}`, ""))}" inputmode="decimal" aria-label="${l.description}: ${head}"></td></tr>`).join("")}
+      <td>${earlierLinesAs === "pct" ? `<span class="with-suffix inline">` : ""}<input id="ep-line-${l.id}" class="sov-in sov-num" data-field="line_${l.id}" value="${esc(draftValue(form, `line_${l.id}`, ""))}" inputmode="decimal" aria-label="${l.description}: ${head}">${earlierLinesAs === "pct" ? `<span class="suffix" aria-hidden="true">%</span></span>` : ""}</td></tr>`).join("")}
   </table></div>`;
 }
 

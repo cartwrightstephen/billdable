@@ -87,3 +87,8 @@ test("a link in a table shown as cards is 44 px tall", () => {
   const css = readFileSync(new URL("../../static/styles.css", import.meta.url), "utf8");
   assert.match(css, /@media \(max-width: 800px\) \{\n  #view table\.stack td > a, #view tr\.action-item td > a \{ display: inline-flex; align-items: center; min-height: 44px; \}/);
 });
+
+test("Earlier pay apps by % complete: the % is inside each line's box", () => {
+  const src = readFileSync(new URL("../../static/js/views/job-payapp-core.js", import.meta.url), "utf8");
+  assert.match(src, /\$\{earlierLinesAs === "pct" \? `<span class="with-suffix inline">` : ""\}<input id="ep-line-/);
+});
