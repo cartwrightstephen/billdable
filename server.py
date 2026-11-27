@@ -533,7 +533,8 @@ def inbound_address(company_id: str) -> str:
 
 def delete_company_data(company_id: str) -> int:
     """Remove a company: its users and sessions, company file (and the copy of an imported JSON
-    file), reset snapshots, uploads, inbound and calendar addresses, helper and mail records. Backups that hold it expire on their own.
+    file), reset snapshots, uploads, inbound and calendar addresses, helper and mail records, and
+    its QuickBooks connection. Backups that hold it expire on their own.
     Used by the owner's Delete the company and by admin.py for a deletion request. Returns how
     many users were removed."""
     removed = auth.delete_company_users(company_id)  # every session of the company ends here
@@ -554,6 +555,7 @@ def delete_company_data(company_id: str) -> int:
     mailer.forget_company(company_id)
     sms.forget_company(company_id)
     reminders.forget_company(company_id)
+    qbo.forget_company(company_id)   # its QuickBooks tokens too, revoked at Intuit (H4)
     return removed
 
 

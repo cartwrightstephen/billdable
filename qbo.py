@@ -20,8 +20,10 @@ version 75 is the floor: Intuit answers anything lower, or nothing, as 75. No li
 connected yet; the first one is the last test (the checklist in that doc), and the stand-in in
 tests/test_qbo.py shows the shapes this code expects.
 
-Tokens are kept in <data dir>/qbo_connections.json, outside the backups on purpose: after a
-restore onto a new disk an owner connects again.
+Tokens are kept in <data dir>/qbo_connections.json, outside the backups on purpose (backup.py
+leaves the file out, and reads past it in older backups): after a restore onto a new disk an owner
+connects again. Deleting a company (server.delete_company_data) drops its tokens and any Connect in
+progress, and asks Intuit to revoke them (forget_company, H4).
 """
 
 from __future__ import annotations
@@ -191,10 +193,20 @@ def finish(state: str, code: str, realm_id: str, redirect_uri: str, user_id: str
 
 
 def disconnect(company_id: str) -> None:
-    # After any refresh in flight, so it can't put the connection back; its newer token is the one revoked.
+    _revoke(_take(company_id))
+
+
+def _take(company_id: str) -> dict[str, Any] | None:
+    """Remove a company's tokens from the file; returns them. After any refresh in flight, so it
+    can't put the connection back; its newer token is the one revoked."""
     with _REFRESH_LOCK:
         conn = connection(company_id)
-        _store(company_id, None)
+        if conn:
+            _store(company_id, None)
+    return conn
+
+
+def _revoke(conn: dict[str, Any] | None) -> None:
     if conn and configured():
         try:  # best effort: the tokens are gone from here either way
             s = settings()
@@ -204,6 +216,21 @@ def disconnect(company_id: str) -> None:
             request.urlopen(req, timeout=TIMEOUT).close()
         except (error.URLError, TimeoutError, OSError):
             pass
+
+
+def forget_company(company_id: str, background: bool = True) -> bool:
+    """A deleted company (H4): its tokens go from the file now, a Connect still in progress can no
+    longer finish, and Intuit is asked to revoke the tokens, from a background thread so a slow
+    Intuit doesn't hold up the deletion. Returns whether the company was connected."""
+    with LOCK:
+        for key in [k for k, v in _PENDING.items() if v.get("company_id") == company_id]:
+            _PENDING.pop(key, None)
+    conn = _take(company_id)
+    if conn and background:
+        threading.Thread(target=_revoke, args=(conn,), name="qbo-revoke", daemon=True).start()
+    elif conn:
+        _revoke(conn)
+    return conn is not None
 
 
 def _access_token(company_id: str) -> tuple[str, str]:
