@@ -319,8 +319,43 @@ function deleteCompanyView() {
     </div>`;
 }
 
+// Where you're signed in (L2): each live session, and Sign out everywhere else.
+let sessionList = null;   // [{id, current, browser, created_at, last_seen_at}] once /api/auth/sessions answers
+let sessionsAsked = 0;
+export function setSessionList(rows) { sessionList = rows; }
+export function sessionsCardHtml(rows = sessionList, demo = false) {
+  const others = (rows || []).filter(r => !r.current);
+  const line = (r) => `<div class="money-row"><span class="label">${r.browser}${r.current ? ` <span class="pill green">This browser</span>` : ""}</span>
+      <span>${r.last_seen_at ? `last used ${fmtDateTime(r.last_seen_at)}` : ""}${r.created_at ? `, signed in ${fmtDateTime(r.created_at)}` : ""}
+      ${r.current || demo ? "" : ` <button class="btn small secondary" data-action="session-end" data-id="${r.id}">Sign out</button>`}</span></div>`;
+  return `<div class="card" id="sessions-card">
+      <h2>Where you're signed in</h2>
+      ${rows ? rows.map(line).join("") : `<p class="sub">Loading…</p>`}
+      ${demo ? `<p class="sub">The sample company is shared, so other visitors aren't listed.</p>`
+        : others.length ? `<div class="form-inline"><button class="btn small secondary" data-action="sessions-end-others">Sign out everywhere else</button></div>`
+        : rows ? `<p class="sub">Signed in on this browser only.</p>` : ""}
+    </div>`;
+}
+async function loadSessions() {
+  sessionsAsked = Date.now();
+  try {
+    const res = await fetch("/api/auth/sessions");
+    if (!res.ok) return;
+    sessionList = escDeep((await readJson(res)).sessions || []);
+  } catch (_) { return; }
+  patch("#sessions-box", sessionsCardHtml(sessionList, me && me.company_id === DEMO_COMPANY_ID));
+}
+async function endSessions(id) {
+  const r = await postJson("/api/auth/sessions/end", id ? { id } : {});
+  if (!r.ok) { toast(r.data.error || "That didn't work."); return; }
+  sessionList = escDeep(r.data.sessions || []);
+  toast(r.data.ended === 1 ? "Signed out of 1 other session." : `Signed out of ${r.data.ended} other sessions.`);
+  patch("#sessions-box", sessionsCardHtml(sessionList, me && me.company_id === DEMO_COMPANY_ID));
+}
+
 function myAccountView() {
   const isDemo = me.company_id === DEMO_COMPANY_ID;
+  if (Date.now() - sessionsAsked > 30_000) loadSessions();
   const verified = me.email_verified
     ? `<span class="pill green">confirmed</span>`
     : `<span class="pill amber">not confirmed</span> ${mailReady ? `<button class="btn small secondary" data-action="resend-verify">Send the link again</button>` : `<span class="sub">Confirming needs email set up on the server.</span>`}`;
@@ -338,6 +373,7 @@ function myAccountView() {
     ${notificationsCardHtml()}
     ${appearanceCardHtml()}
     ${isDemo || twoStepPrompt ? "" : twoStepCardHtml()}
+    <div id="sessions-box">${sessionsCardHtml(sessionList, isDemo)}</div>
     ${me.onboarding_dismissed && !isDemo ? `<p><button class="btn small secondary" data-action="onb-show">Show the setup checklist</button></p>` : ""}
     <p class="sub">Your account id: <code>${me.id}</code></p>
     <div class="save-bar"><button class="btn" data-action="save-account">Save</button></div>
@@ -474,6 +510,7 @@ export function trialBannerHtml() {
 export function forgetSettings() {
   twoStepSetup = null; recoveryCodes = null; lastInvite = null; adminCompanies = null; switchDraft = {}; codeSentTo = ""; profileDraft = null;
   helperReview = null; helperDraft = null; auditJobFilter = "all"; auditWho = "";
+  storageInfo = null; storageAsked = 0; sessionList = null; sessionsAsked = 0;
 }
 onSessionEnd(forgetSettings);
 
@@ -651,6 +688,8 @@ export const views = {
 export const actions = {
   "audit-who": (el) => { auditWho = el.dataset.who === "people" ? "people" : ""; render(); },
   "reset-data": () => resetData(),
+  "sessions-end-others": () => endSessions(""),
+  "session-end": (el) => endSessions(unesc(el.dataset.id || "")),
   "sms-resend": async () => {
     const r = await postJson("/api/auth/sms", { phone: smsCodeTo, sms_opt_in: true });
     if (!r.ok) { refuseForm("smscode", r.data.fields || { _form: r.data.error || "Not sent." }); return; }

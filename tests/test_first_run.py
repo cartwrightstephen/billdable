@@ -298,7 +298,7 @@ class FirstRunWithMailTests(ServerCase):
 
     def test_confirm_your_email_before_the_first_send(self):
         self.mail_on()
-        cookie, signed = self.signup("first-run-mail@example.com")
+        cookie, signed = self.signup("first-run-mail@example.com", confirm=False)
         self.assertEqual(signed["verification"], "sent")
         self.wait_for_mail(1)
         _, token = self.link_token("verify")

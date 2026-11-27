@@ -114,3 +114,29 @@ test("Change password is its own page; with mail on the server it asks for the e
   for (const id of ["pw-code", "pw-current", "pw-new"]) delete dom.byId[id];
   page.setAccount({ codesByEmail: false });
 });
+
+test("Settings, Company shows how much file storage is used (security review H5)", () => {
+  assert.match(settings.storageHtml(null), /checking how much room/);
+  const half = settings.storageHtml({ used_bytes: 512 * 1024 * 1024, cap_bytes: 1024 ** 3, max_file_mb: 15 });
+  assert.match(half, /512 MB of 1\.0 GB used \(50%\)/);
+  assert.match(half, /<progress class="storage-meter" max="100" value="50"/);
+  assert.doesNotMatch(half, /Nearly full/);
+  assert.match(settings.storageHtml({ used_bytes: 1.9 * 1024 ** 3, cap_bytes: 2 * 1024 ** 3 }), /Nearly full/);
+  assert.equal(settings.sizeWords(3 * 1024 * 1024), "3 MB");
+});
+
+test("My account lists where you're signed in, with Sign out everywhere else (security review L2)", () => {
+  const rows = [
+    { id: "a1", current: true, browser: "Chrome on Mac", created_at: "2026-11-20T09:00:00+00:00", last_seen_at: "2026-11-27T09:00:00+00:00" },
+    { id: "b2", current: false, browser: "Safari on iPhone", created_at: "2026-11-21T09:00:00+00:00", last_seen_at: "2026-11-26T09:00:00+00:00" },
+  ];
+  const html = settings.sessionsCardHtml(rows);
+  assert.match(html, /Where you're signed in/);
+  assert.match(html, /Chrome on Mac <span class="pill green">This browser<\/span>/);
+  assert.match(html, /data-action="session-end" data-id="b2"/);
+  assert.doesNotMatch(html, /data-id="a1"/);
+  assert.match(html, /data-action="sessions-end-others">Sign out everywhere else/);
+  assert.match(settings.sessionsCardHtml([rows[0]]), /Signed in on this browser only/);
+  assert.doesNotMatch(settings.sessionsCardHtml(rows, true), /Sign out everywhere else/);
+  assert.match(settings.sessionsCardHtml(null), /Loading/);
+});

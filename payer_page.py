@@ -11,8 +11,9 @@ contractors typed, with no app code.
 from __future__ import annotations
 
 import html
+import os
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import domain
@@ -55,6 +56,47 @@ def _date(iso: str | None) -> str:
         return f"{d.strftime('%b')} {d.day}, {d.year}"
     except (TypeError, ValueError):
         return ""
+
+
+# ---------- how long a link works (security review L2) ----------
+
+LINK_DAYS_DEFAULT = 60
+
+
+def link_days() -> int:
+    """Days a customer page or signing link works after it was last sent (DURACASH_LINK_DAYS,
+    default 60). Sending it again, a reminder included, starts the count again."""
+    try:
+        return max(1, int(os.environ.get("DURACASH_LINK_DAYS") or LINK_DAYS_DEFAULT))
+    except ValueError:
+        return LINK_DAYS_DEFAULT
+
+
+def link_issued_at(item: dict[str, Any], kind: str) -> str:
+    """When the link was last sent: payer_link_at / sign_link_at, or for one made before
+    those were kept, when the pay app was sent or the signature asked for."""
+    if kind == "invoice":
+        return str(item.get("payer_link_at") or item.get("sent_at") or "")
+    return str(item.get("sign_link_at") or item.get("signature_requested_at") or "")
+
+
+def link_expired(item: dict[str, Any], kind: str, now: datetime | None = None) -> bool:
+    try:
+        issued = datetime.fromisoformat(link_issued_at(item, kind))
+    except ValueError:
+        return False   # no time kept: never sent by email, so nobody outside holds it
+    if issued.tzinfo is None:
+        issued = issued.replace(tzinfo=timezone.utc)
+    return (now or datetime.now(timezone.utc)) - issued > timedelta(days=link_days())
+
+
+def render_expired(state: dict[str, Any]) -> str:
+    company = state.get("company", {}).get("name", "") or "your contractor"
+    return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
+            f'<meta name="robots" content="noindex"><title>This link has expired</title><style>{PAGE_STYLE}</style></head><body><main>'
+            f"<h1>This link has expired</h1><p>Links from {_e(company)} work for {link_days()} days after they are sent, so an old "
+            f"email can't be used by someone it was forwarded to. Ask {_e(company)} to send it again: the new email has a link that works.</p>"
+            '<p class="foot">Prepared with Duracash.</p></main></body></html>')
 
 
 def find(state: dict[str, Any], token: str) -> tuple[dict | None, dict | None]:

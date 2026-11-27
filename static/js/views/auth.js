@@ -24,6 +24,12 @@ export function setDataNotice(on) { dataNotice = on; }
 let authError = "";      // the two-step code screen's error; the sign-in form uses formErrors.auth
 let loginCode = null;     // {email, password} while the sign-in asks for a two-step code
 let loginNote = "";       // why the code is asked for, when it isn't the usual sign-in (a password reset)
+let signupSent = "";      // "check your email" after Create account on a server that sends mail (L3)
+// What Create account shows when the server answers "check your email" (L3): the same whether
+// or not the email had an account, so the page never says which.
+export function signupSentHtml(message) {
+  return message ? `<p class="notice signup-sent" role="status">${esc(message)}</p>` : "";
+}
 
 export function renderOutage(message) {
   setAiVisible(false);
@@ -76,6 +82,7 @@ export function renderLanding() {
           <h2>${signup ? "Create your company" : "Sign in"}</h2>
           <p class="sub">${signup ? "Free until your first pay app sent through Duracash is paid, or 90 days. Passwords need 10+ characters." : pendingPath ? "Sign in to open that page." : "Back to your jobs, supporting documents and clients."}</p>
           ${!signup && signedOutNote ? `<p class="notice signed-out-note" role="status">${esc(signedOutNote)}</p>` : ""}
+          ${signup ? signupSentHtml(signupSent) : ""}
           ${!signup && loginCode ? `<form id="auth-form">
             <label for="login-code">${loginCode.method === "email" ? "Code from the email" : "Code from your authenticator app"}</label>
             <input id="login-code" name="code" required autocomplete="one-time-code" inputmode="numeric" maxlength="12" />
@@ -207,6 +214,13 @@ async function onAuthSubmit(e) {
     }
     return;
   }
+  if (data.check_email && authMode === "signup") {
+    signupSent = String(data.message || "Check your email for a link to finish.");
+    clearForm("auth");
+    renderLanding();
+    return;
+  }
+  signupSent = "";
   rememberSignIn();
   // After sign-up (R1-07): say where the confirmation link went, or why none did.
   setCheckEmail(authMode === "signup" && data.user

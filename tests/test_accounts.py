@@ -102,10 +102,40 @@ class ServerCase(unittest.TestCase):
         except ValueError:
             return res, payload
 
-    def signup(self, email_addr, company="Pine & Sons"):
+    def signup(self, email_addr, company="Pine & Sons", confirm=True):
+        """Create an account and sign in. With mail on, sign-up answers "check your email" (L3) and
+        the link in it signs in; confirm=False instead signs in without opening it, as an account
+        made before that (or one whose link went unopened) is: signed in, email not confirmed."""
         res, data = self.request("POST", "/api/auth/signup", {"accept_terms": True, "email": email_addr, "password": PASSWORD, "name": "Pat Pine", "company_name": company})
         self.assertEqual(res.status, 200, data)
+        if data.get("check_email") and not confirm:
+            self.wait_for_mail(len(self.sink.messages) + 1)
+            user = auth.user_by_email(email_addr)
+            return "duracash_session=" + auth.create_session(user), {"user": user, "verification": "sent"}
+        if data.get("check_email"):
+            # A server that sends mail answers "check your email" (L3): the link signs the account in.
+            res, verified = self.request("POST", "/api/auth/verify", {"token": self.verify_token_for(email_addr)})
+            self.assertEqual(res.status, 200, verified)
+            self.assertTrue(verified.get("signed_in"), verified)
+            return res.getheader("Set-Cookie").split(";")[0], {**verified, "verification": "sent"}
         return res.getheader("Set-Cookie").split(";")[0], data
+
+    def mail_to(self, email_addr, words, wait=True):
+        """The newest email to this address whose text has `words`, waiting for it if need be."""
+        for _ in range(100 if wait else 1):
+            for msg in reversed(self.sink.messages):
+                parsed = email.message_from_bytes(msg["data"], policy=email.policy.default)
+                if email_addr.lower() in str(parsed["to"] or "").lower():
+                    text = parsed.get_body(("plain",)).get_content()
+                    if words in text:
+                        return text
+            time.sleep(0.05)
+        return None
+
+    def verify_token_for(self, email_addr):
+        text = self.mail_to(email_addr, "#verify=")
+        self.assertIsNotNone(text, f"no confirmation email to {email_addr}")
+        return re.search(r"#verify=([A-Za-z0-9_-]+)", text).group(1)
 
     def login(self, email_addr, password=PASSWORD):
         res, data = self.request("POST", "/api/auth/login", {"email": email_addr, "password": password})
@@ -242,7 +272,7 @@ class AccountHttpTests(ServerCase):
 
     def test_verification_and_the_send_rule(self):
         self.mail_on()
-        cookie, data = self.signup("verify@pine.example")
+        cookie, data = self.signup("verify@pine.example", confirm=False)
         self.assertEqual(data["verification"], "sent")
         self.wait_for_mail(1)
         _, token = self.link_token("verify")
@@ -288,7 +318,7 @@ class AccountHttpTests(ServerCase):
         """Oct 23 note 2: the page reads mail_ready and email_verified to turn Invite off with the
         reason (static/js/setup.js inviteLocked); the server still refuses the tap itself."""
         self.mail_on()
-        owner, _ = self.signup("unconfirmed@team.example", "Unconfirmed Co")
+        owner, _ = self.signup("unconfirmed@team.example", "Unconfirmed Co", confirm=False)
         self.wait_for_mail(1)
         res, me = self.request("GET", "/api/auth/me", cookie=owner)
         self.assertEqual((me["mail_ready"], me["user"]["email_verified"]), (True, False))
@@ -427,7 +457,7 @@ class AccountHttpTests(ServerCase):
 
     def test_invite_is_emailed_when_mail_is_ready(self):
         self.mail_on()
-        owner, data = self.signup("owner2@team.example", "Mail Team\n\nYour account is locked. Verify at https://evil.example")
+        owner, data = self.signup("owner2@team.example", "Mail Team\n\nYour account is locked. Verify at https://evil.example", confirm=False)
         self.wait_for_mail(1)
         self.sink.messages.clear()
         res, out = self.request("POST", "/api/team/invite", {"email": "new@team.example", "role": "owner"}, cookie=owner)
@@ -710,7 +740,7 @@ class ReviewFourTests(ServerCase):
         self.assertEqual(codes[:20], [200] * 20)
         self.assertEqual(codes[20], 409)
         self.mail_on()
-        cookie, _ = self.signup("m2-verify@team.example")
+        cookie, _ = self.signup("m2-verify@team.example", confirm=False)
         self.wait_for_mail(1)
         codes = [self.request("POST", "/api/auth/resend-verify", {}, cookie=cookie)[0].status for _ in range(4)]
         self.assertEqual(codes, [200, 200, 409, 409])  # sign-up used one of the three an hour
@@ -723,8 +753,8 @@ class ReviewFourTests(ServerCase):
         self.assertEqual(self.request("GET", "/api/auth/me", cookie=other)[0].status, 401)
         self.assertEqual(self.request("GET", "/api/auth/me", cookie=cookie)[0].status, 200)
         for _ in range(5):
-            self.request("POST", "/api/auth/password", {"current": "wrong wrong wrong", "new": "x" * 12}, cookie=cookie)
-        res, _ = self.request("POST", "/api/auth/password", {"current": "another long password", "new": "x" * 12}, cookie=cookie)
+            self.request("POST", "/api/auth/password", {"current": "wrong wrong wrong", "new": "yet another pass 7"}, cookie=cookie)
+        res, _ = self.request("POST", "/api/auth/password", {"current": "another long password", "new": "yet another pass 7"}, cookie=cookie)
         self.assertEqual(res.status, 429)
 
     def test_voided_pay_app_is_not_emailed(self):  # L1

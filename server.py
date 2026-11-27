@@ -223,7 +223,7 @@ def demo_enabled() -> bool:
 # What a read-only company may still do (P2-2's "past due: read-only, never deletion"). The
 # read-only demo allows less: no password, two-step or team changes, or the demo locks.
 DEMO_READ_ONLY_OK = {"_p_helper_ask", "_p_helper_feedback", "_p_sov_parse", "_p_payments_csv", "_p_contract_read", "_p_ping", "_p_qty_preview"}
-COMPANY_READ_ONLY_OK = DEMO_READ_ONLY_OK | {"_p_password", "_p_password_code", "_p_two_step", "_p_my_name", "_p_my_sms", "_p_reminder_prefs", "_p_reminder_read", "_p_resend_verify", "_p_helper_admin",
+COMPANY_READ_ONLY_OK = DEMO_READ_ONLY_OK | {"_p_password", "_p_sessions_end", "_p_password_code", "_p_two_step", "_p_my_name", "_p_my_sms", "_p_reminder_prefs", "_p_reminder_read", "_p_resend_verify", "_p_helper_admin",
                                              "_p_team_invite", "_p_team_revoke", "_p_team_role", "_p_team_remove", "_p_account_delete",
                                              "_p_qbo_payments", "_p_qbo_disconnect", "_p_billing_checkout", "_p_billing_portal",
                                              "_p_appearance", "_p_profile_save", "_p_profile_delete", "_p_admin_hand_over"}
@@ -1081,6 +1081,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         self._rid, self._t0 = secrets.token_hex(6), time.monotonic()
+        self._expired_link = None
         try:
             self._get()
         except BadRequest as exc:
@@ -1096,6 +1097,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         self._rid, self._t0 = secrets.token_hex(6), time.monotonic()
+        self._expired_link = None
         try:
             self._post()
         except BadRequest as exc:
@@ -1791,7 +1793,7 @@ class Handler(BaseHTTPRequestHandler):
                 if body.get("remember") is not False:
                     cookies.append(self._device_cookie(auth.remember_device(user["id"])))
         auth.login_succeeded(user["email"])
-        session = self._set_cookie(auth.create_session(user))["Set-Cookie"]
+        session = self._set_cookie(auth.create_session(user, self.headers.get("User-Agent")))["Set-Cookie"]
         self._json(200, {"user": self._me_user(user)}, {"Set-Cookie": [session, *cookies]})
 
     def _email_code_due(self, user: dict) -> bool:
@@ -1834,6 +1836,30 @@ class Handler(BaseHTTPRequestHandler):
                 "company_admin": auth.is_company_admin(user["id"], user["company_id"]),
                 "owner_names": auth.owner_names(user["company_id"]), "texts_number": sms.settings()["from"]}
 
+    def _uniform_signup(self) -> bool:
+        """On a server that sends mail (L3), sign-up answers the same whether or not the email
+        already has an account: "check your email". A new account is signed in by the link in
+        its confirmation email; an existing one is emailed how to sign in or reset instead."""
+        return mailer.configured() and bool(app_url())
+
+    def _signup_reply(self, email: str) -> None:
+        self._json(200, {"check_email": True, "email": email,
+                         "message": f"Check your email: we sent a link to {email}. Open it to finish and sign in. It works for 3 days. "
+                                    "Nothing there? Check spam, or try again in a few minutes."})
+
+    def _send_existing_account_email(self, email: str) -> None:
+        account = auth.user_by_email(email)
+        if not account or account["company_id"] == auth.DEMO_COMPANY_ID:
+            return
+        if not _within_limit(f"signup-exists:{account['id']}", 3, 3600):
+            return
+        url = app_url()
+        self._system_email(
+            account["email"], "You already have a Duracash account",
+            f"Someone tried to create a Duracash account with {account['email']}, which already has one.\n\n"
+            f"Sign in here: {url}/\nForgot the password? Choose \"Forgot your password?\" on that page.\n\n"
+            "If it wasn't you, ignore this email; nothing about your account changed.")
+
     def _p_signup(self, m) -> None:
         body = self._read_json()
         if body.get("accept_terms") is not True:
@@ -1844,18 +1870,33 @@ class Handler(BaseHTTPRequestHandler):
         if not _local(ip) and not _within_limit(f"signup:{ip}", 5, 3600):
             self._json(429, {"error": "Too many new accounts from this network. Try again in an hour."})
             return
+        uniform = self._uniform_signup()
+        email = _text(body, "email").strip().lower()
         try:
             company_id = new_company_id()
             # Read before the account is saved: a refused name must not leave a user with no company.
             company_name = _text(body, "company_name").strip()
-            user = auth.create_user(_text(body, "email"), _text(body, "password"), _text(body, "name"), company_id,
-                                    terms_version=legal.TERMS_VERSION, reminders=auth.new_user_reminders())
+            try:
+                user = auth.create_user(_text(body, "email"), _text(body, "password"), _text(body, "name"), company_id,
+                                        terms_version=legal.TERMS_VERSION, reminders=auth.new_user_reminders())
+            except ValueError as exc:
+                if not (uniform and "already exists" in str(exc)):
+                    raise
+                # The same reply, after as long, as a new account (L3); the email says what to do.
+                auth.burn_hash_time(body.get("password"))
+                threading.Thread(target=self._send_existing_account_email, args=(email,), daemon=True).start()
+                self._signup_reply(email)
+                return
             # The company name can wait (R2-02): until it is typed in Account, it is the person's name.
             fresh = empty_state(company_name or str(user.get("name") or "").strip() or "New company")
             trial.start(fresh["company"])
             with company_lock(company_id):
                 save_company(company_id, fresh)
-            token = auth.create_session(user)
+            if uniform:
+                threading.Thread(target=self._send_verification, args=(user, True), daemon=True).start()
+                self._signup_reply(user["email"])
+                return
+            token = auth.create_session(user, self.headers.get("User-Agent"))
             verification = self._send_verification(user)
             self._json(200, {"user": self._me_user(user), "verification": verification}, self._set_cookie(token))
         except ValueError as exc:
@@ -1868,7 +1909,7 @@ class Handler(BaseHTTPRequestHandler):
         if not user:
             self._json(404, {"error": "There is no sample company on this server."})
             return
-        self._json(200, {"user": user}, self._set_cookie(auth.create_session(user)))
+        self._json(200, {"user": user}, self._set_cookie(auth.create_session(user, self.headers.get("User-Agent"))))
 
     def _p_logout(self, m) -> None:
         auth.destroy_session(self._token())
@@ -1915,14 +1956,21 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"ok": True, "needs_code": True, "email": user["email"],
                              "message": "Password changed. Sign in with your new password and your authenticator code."})
             return
-        self._json(200, {"user": user}, self._set_cookie(auth.create_session(user)))
+        self._json(200, {"user": user}, self._set_cookie(auth.create_session(user, self.headers.get("User-Agent"))))
 
     def _p_verify(self, m) -> None:
         body = self._read_json()
+        signing_in: list = []
         try:
-            user = auth.verify_email(body.get("token"))
+            user = auth.verify_email(body.get("token"), signing_in)
         except auth.AuthError as exc:
             self._json(400, {"error": str(exc)})
+            return
+        # The link that finishes a sign-up (L3) signs the new account in, unless this browser
+        # already has someone signed in.
+        if signing_in and not self._session_user():
+            auth.login_succeeded(user["email"])
+            self._json(200, {"user": user, "signed_in": True}, self._set_cookie(auth.create_session(user, self.headers.get("User-Agent"))))
             return
         self._json(200, {"user": user})
 
@@ -1950,7 +1998,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._mutate(user["company_id"], lambda st: domain.audit(
             st, "", "team_join", f"{user['name']} ({user['email']}) joined the team as {profiles.profile_name(st, user['profile_id'])}.", user["name"]))
-        self._json(200, {"user": user}, self._set_cookie(auth.create_session(user)))
+        self._json(200, {"user": user}, self._set_cookie(auth.create_session(user, self.headers.get("User-Agent"))))
 
     def _p_inbound_email(self, m) -> None:
         self._inbound_email(m.group(1))
@@ -2151,6 +2199,25 @@ class Handler(BaseHTTPRequestHandler):
         except auth.AuthError as exc:
             self._json(400, {"error": str(exc)})
 
+    def _g_sessions(self, m, user) -> None:
+        """Settings, My account: where this person is signed in (L2). The sample company's one
+        login is shared by every visitor, so it lists only this browser."""
+        rows = auth.list_sessions(user["id"], self._token())
+        if user["company_id"] == auth.DEMO_COMPANY_ID:
+            rows = [r for r in rows if r["current"]]
+        self._json(200, {"sessions": rows})
+
+    def _p_sessions_end(self, m, ctx: "Ctx") -> None:
+        """Sign out everywhere else, or one other session ({"id": ...}); this one stays (L2)."""
+        if ctx.company_id == auth.DEMO_COMPANY_ID:
+            self._json(409, {"error": "The sample company is shared, so its other visitors stay signed in."})
+            return
+        only = _text(ctx.body, "id", limit=64) or None
+        ended = auth.end_sessions(ctx.user["id"], self._token(), only)
+        if ended:
+            log_json("info", msg="sessions ended by their owner", count=ended, rid=self._rid)
+        self._json(200, {"ended": ended, "sessions": auth.list_sessions(ctx.user["id"], self._token())})
+
     def _p_ping(self, m, ctx: "Ctx") -> None:
         """Stay signed in (G2): the session was checked, and so its last use moved to now."""
         self._json(200, {"ok": True, "idle_minutes": auth.idle_minutes()})
@@ -2231,7 +2298,7 @@ class Handler(BaseHTTPRequestHandler):
     def _system_email(self, to: str, subject: str, body: str, company_id: str = "", shared_limit: bool = True) -> str:
         return send_system_email(to, subject, body, company_id, self._rid, shared_limit=shared_limit)
 
-    def _send_verification(self, user: dict) -> str:
+    def _send_verification(self, user: dict, signs_in: bool = False) -> str:
         url = app_url()
         if user["company_id"] == auth.DEMO_COMPANY_ID:
             return "the demo account isn't verified"
@@ -2241,10 +2308,12 @@ class Handler(BaseHTTPRequestHandler):
             return EMAIL_NOT_SET_UP
         if not _within_limit(f"verify:{user['id']}", 3, 3600):
             return "three links were already sent in the last hour; use the newest, or try later"
-        raw = auth.verify_email_token(user["id"])
+        raw = auth.verify_email_token(user["id"], signs_in=signs_in)
         return self._system_email(
             user["email"], "Confirm your email for Duracash",
-            f"Hi {user['name']},\n\nConfirm that this is your email address (the link works for 3 days):\n{url}/#verify={raw}\n\n"
+            f"Hi {user['name']},\n\n" + ("Open this link to confirm your email and sign in to your new account (it works once, for 3 days):"
+                                           if signs_in else "Confirm that this is your email address (the link works for 3 days):")
+            + f"\n{url}/#verify={raw}\n\n"
             "Duracash emails your pay apps from this address's account, with replies coming back to it, "
             "so we check it first. If you didn't sign up, ignore this email.",
             company_id=user["company_id"],
@@ -2717,13 +2786,16 @@ class Handler(BaseHTTPRequestHandler):
         with company_lock(company_id):
             state = load_company(company_id)
         job, invoice = payer_page.find(state, token)
+        if invoice and payer_page.link_expired(invoice, "invoice"):
+            self._expired_link = payer_page.render_expired(state)   # L2: an old link shows why
+            return None, None, None
         return (state, job, invoice) if invoice else (None, None, None)
 
     def _payer_page_get(self, company_id: str, token: str, rest: str) -> None:
         """The payer's page for one pay app (P2-4); no account, the link is the key."""
         state, job, invoice = self._payer_lookup(company_id, token)
         if not invoice:
-            self._send(404, NOT_FOUND_PAGE, "text/html; charset=utf-8")
+            self._link_missing()
             return
         private = {"Cache-Control": "no-store", "X-Robots-Tag": "noindex"}
         if rest == "/pdf" and invoice.get("status") != "void":
@@ -2747,7 +2819,7 @@ class Handler(BaseHTTPRequestHandler):
         shows the page again with why; a question is emailed to the company's owners."""
         state, job, invoice = self._payer_lookup(company_id, token)
         if not invoice:
-            self._send(404, NOT_FOUND_PAGE, "text/html; charset=utf-8")
+            self._link_missing()
             return
         fields = dict(parse_qsl(self._read_raw(8_000).decode("utf-8", "replace")))
         link = f"/p/{company_id}.{token}"
@@ -2792,7 +2864,7 @@ class Handler(BaseHTTPRequestHandler):
     def _payer_received(self, company_id: str, token: str) -> None:
         state, job, invoice = self._payer_lookup(company_id, token)
         if not invoice:
-            self._send(404, NOT_FOUND_PAGE, "text/html; charset=utf-8")
+            self._link_missing()
             return
         raw = self._read_raw(4_000)
         if demo_locked(company_id):
@@ -2897,19 +2969,30 @@ class Handler(BaseHTTPRequestHandler):
             importer.drop_share(key)
         self._json(status, payload, self._share_cookie(None) if status == 200 else None)
 
+    def _link_missing(self) -> None:
+        """A customer page or signing link that isn't there (404) or is too old (410, L2)."""
+        page = getattr(self, "_expired_link", None)
+        if page:
+            self._send(410, page.encode("utf-8"), "text/html; charset=utf-8", {"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
+            return
+        self._send(404, NOT_FOUND_PAGE, "text/html; charset=utf-8")
+
     def _co_lookup(self, company_id: str, token: str) -> tuple:
         if company_id in deleted_companies() or not company_exists(company_id):
             return None, None, None
         with company_lock(company_id):
             state = load_company(company_id)
         job, co = payer_page.find_co(state, token)
+        if co and payer_page.link_expired(co, "co"):
+            self._expired_link = payer_page.render_expired(state)
+            return None, None, None
         return (state, job, co) if co else (None, None, None)
 
     def _co_sign_page(self, company_id: str, token: str, error: str) -> None:
         """The change-order signing page (P2-3); the link is the key."""
         state, job, co = self._co_lookup(company_id, token)
         if not co:
-            self._send(404, NOT_FOUND_PAGE, "text/html; charset=utf-8")
+            self._link_missing()
             return
         page = payer_page.render_co(state, job, co, f"/s/{company_id}.{token}", error)
         self._send_compressible(200 if not error else 400, page.encode("utf-8"), "text/html; charset=utf-8",
@@ -2918,7 +3001,7 @@ class Handler(BaseHTTPRequestHandler):
     def _co_sign_post(self, company_id: str, token: str) -> None:
         state, job, co = self._co_lookup(company_id, token)
         if not co:
-            self._send(404, NOT_FOUND_PAGE, "text/html; charset=utf-8")
+            self._link_missing()
             return
         form = dict(parse_qsl(self._read_raw(4_000).decode("utf-8", "replace")))
         if demo_locked(company_id):
@@ -3298,6 +3381,8 @@ ROUTES = [
 
     # == stream: settings-auth ==
     Route("POST", r"/api/auth/ping", "_p_ping", "body"),
+    Route("GET", r"/api/auth/sessions", "_g_sessions", "user"),
+    Route("POST", r"/api/auth/sessions/end", "_p_sessions_end", "body"),
     Route("POST", r"/api/auth/password/code", "_p_password_code", "body"),
     Route("POST", r"/api/me/appearance", "_p_appearance", "body"),
     # Only the Owner profile adds, changes or deletes profiles (A4): someone who manages the
