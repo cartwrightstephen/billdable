@@ -56,3 +56,29 @@ test("a check answered at Review & send shows as checked or not needed, not as m
   assert.match(html, /<span class="visually-hidden">checked<\/span>/);
   assert.match(html, /<span class="visually-hidden">not needed this time<\/span>/);
 });
+
+test("the time sheet offers a team member once, and the conversation is a multi-line box", async () => {
+  const forms = await import("../../static/js/forms.js");
+  st.setTeamData({ users: [{ id: "u1", name: "Alex" }, { id: "u2", name: "Sam" }] });
+  st.setLocation("daily");
+  core.setState({ company: { name: "Pine" }, jobs: [job], payers: [], inbox: [], daily_records: [], files: [], email_log: [] });
+  daily.daily.rows.crew = 2;
+  daily.daily.open.add("conversation");
+  forms.formDraft.daily = { ts_pick_0: "u1", ts_pick_1: "" };
+  const reg = await import("../../static/js/views/index.js");
+  const html = reg.views.daily();
+  const row = (n) => html.slice(html.indexOf(`id="daily-ts-pick-${n}"`), html.indexOf("</select>", html.indexOf(`id="daily-ts-pick-${n}"`)));
+  assert.match(row(0), /value="u1"/);
+  assert.doesNotMatch(row(1), /value="u1"/, "Alex is on row 1 already");
+  assert.match(row(1), /value="u2"/);
+  assert.match(html, /<textarea id="daily-conversation-text-0"/);
+  daily.daily.rows.crew = 1;
+  daily.daily.open.delete("conversation");
+  forms.formDraft.daily = {};
+  st.setTeamData(null);
+});
+
+test("Someone else puts the cursor in the name box straight away", async () => {
+  const src = (await import("node:fs")).readFileSync(new URL("../../static/js/views/daily.js", import.meta.url), "utf8");
+  assert.match(src, /if \(el\.value === OTHER_PERSON\) document\.getElementById\(el\.id\.replace\("-pick-", "-name-"\)\)\?\.focus\(\);/);
+});

@@ -50,7 +50,7 @@ export const RECORD_SECTIONS = [
     { name: "who", label: "Who inspected", placeholder: "City electrical inspector" }, { name: "outcome", label: "Result", placeholder: "Passed rough-in" }] },
   // Conversation / note with client (Nov 26): what Log a conversation did, here with the rest.
   { key: "conversation", title: "Conversation / note with client", chip: "Conversation / note with client", kind: "conversation", one: "conversation", many: "conversations", more: true, noFiles: true, fields: [
-    { name: "text", label: "What was said", wide: true, placeholder: "Owner asked to move the vanity 6 inches" },
+    { name: "text", label: "What was said", wide: true, multiline: true, placeholder: "Owner asked to move the vanity 6 inches" },
     { name: "next_on", label: "Check again on (optional)", type: "date", waiting: true }] },
   { key: "other", title: "Other documents and notes", chip: "Other", one: "other document or note", many: "other documents and notes", more: true, fields: [
     { name: "kind", label: "Kind", options: OTHER_KINDS }, { name: "label", label: "What it is", placeholder: "COI Brightwater 2026-27" },
@@ -118,7 +118,7 @@ function recordSectionHtml(s, j) {
   const waiting = !!(j && (j.invoices || []).some(i => ["sent", "approved", "partial"].includes(i.status)));
   const rows = Array.from({ length: daily.rows[s.key] || 1 }, (_, n) => {
     const boxes = s.fields.filter(f => !f.waiting || waiting).map(f => {
-      const opts = { form: "daily", name: `${s.key}_${f.name}_${n}`, id: `daily-${s.key}-${f.name}-${n}`, label: f.label, wide: f.wide, placeholder: f.placeholder || "", inputmode: f.inputmode || "", type: f.type || "text" };
+      const opts = { form: "daily", name: `${s.key}_${f.name}_${n}`, id: `daily-${s.key}-${f.name}-${n}`, label: f.label, wide: f.wide, multiline: !!f.multiline, placeholder: f.placeholder || "", inputmode: f.inputmode || "", type: f.type || "text" };
       if (f.money) return moneyField(opts);
       return field(f.options ? { ...opts, options: f.options() } : opts);
     }).join("");
@@ -152,12 +152,17 @@ export function crewTotal(rows) {
 function timeSheetHtml(s) {
   const users = teamUsers();
   const options = [["", "Pick who worked…"], ...users.map(u => [unesc(u.id), unesc(u.name || u.email || "")]), [OTHER_PERSON, "Someone else (type the name)"]];
-  const rows = Array.from({ length: daily.rows.crew || 1 }, (_, n) => {
-    const pick = draftValue("daily", `ts_pick_${n}`, "");
+  const count = daily.rows.crew || 1;
+  const picks = Array.from({ length: count }, (_, n) => draftValue("daily", `ts_pick_${n}`, ""));
+  const rows = Array.from({ length: count }, (_, n) => {
+    const pick = picks[n];
     const typedName = draftValue("daily", `ts_name_${n}`, "");
     const other = pick === OTHER_PERSON || (!pick && typedName);
+    // A team member already on another row isn't offered again (Nov 27 hunt).
+    const taken = new Set(picks.filter((p, m) => m !== n && p && p !== OTHER_PERSON));
+    const rowOptions = options.filter(([v]) => !taken.has(v));
     return `<div class="crew-row form-grid">
-      ${field({ form: "daily", name: `ts_pick_${n}`, id: `daily-ts-pick-${n}`, label: "Crew member", options, value: other && !pick ? OTHER_PERSON : "", attrs: 'data-crew-pick="1"' })}
+      ${field({ form: "daily", name: `ts_pick_${n}`, id: `daily-ts-pick-${n}`, label: "Crew member", options: rowOptions, value: other && !pick ? OTHER_PERSON : "", attrs: 'data-crew-pick="1"' })}
       ${other ? field({ form: "daily", name: `ts_name_${n}`, id: `daily-ts-name-${n}`, label: "Name", placeholder: "Independent contractor, day labor" }) : ""}
       ${field({ form: "daily", name: `ts_hours_${n}`, id: `daily-ts-hours-${n}`, label: "Hours", inputmode: "decimal", attrs: 'data-crew-hours="1" pattern="[0-9]*[.]?[0-9]*"' })}
       ${removeButton("crew", n, "crew member")}
@@ -439,7 +444,9 @@ if (typeof document !== "undefined" && document.addEventListener) document.addEv
     // Someone else opens the name box; a team member closes it.
     (formDraft.daily ||= {})[el.dataset.field] = el.value;
     render();
-    if (el.value === OTHER_PERSON) focusAfterDraw(() => document.getElementById(el.id.replace("-pick-", "-name-")));
+    // Straight to the name box: the redraw puts the focus back on the picker by its id, so a
+    // focus after the next frame found it taken and left it there (Nov 27 hunt).
+    if (el.value === OTHER_PERSON) document.getElementById(el.id.replace("-pick-", "-name-"))?.focus();
   } else if (el.id === "daily-job" && currentView === "daily") {
     // Files already up are on the job they went to; they can't come along to another.
     if (daily.uploaded.length) { daily.uploaded = []; toast("The files already uploaded stay on the job they went to."); }
@@ -644,7 +651,7 @@ export const actions = {
     else if (s.more) daily.rows[key] = Math.min(10, (daily.rows[key] || 1) + 1);
     render();
     const n = (daily.rows[key] || 1) - 1;
-    focusAfterDraw(() => document.querySelector(`[data-record-section="${key}"] .record-row:nth-of-type(${n + 1}) input, [data-record-section="${key}"] .record-row:nth-of-type(${n + 1}) select`));
+    focusAfterDraw(() => document.querySelector(`[data-record-section="${key}"] .record-row:nth-of-type(${n + 1}) :is(input, select, textarea)`));
   },
   "daily-photos-done": (el) => { daily.photosDone.add(el.dataset.kind); render(); },
   "daily-photos-more": (el) => { daily.photosDone.delete(el.dataset.kind); render(); },
