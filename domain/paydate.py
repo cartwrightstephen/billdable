@@ -12,8 +12,9 @@ the money on one open pay app, and why that day:
   4. "usual":    the client's "days they usually take to pay" from the Client playbook, which
                  starts at the company's default (14 days, 21 for a GC).
 
-Days are calendar days, as the rest of Duracash counts them (the due date, follow-ups and the
-Results figures); there is no business-day calendar to follow.
+Days are calendar days, as follow-ups and the Results figures count them. A date from payment
+terms falls on a business day, as the due date does (domain.payment_due_on): one on a weekend or a
+federal holiday moves to the next business day.
 
 Imported at the bottom of domain/__init__.py (from .paydate import *). Helpers from domain are
 imported inside each function, so the two modules never import each other at load time.
@@ -111,7 +112,8 @@ def predicted_pay(state: dict[str, Any], job: dict[str, Any], invoice: dict[str,
         on, basis = _day(invoice["due_on"]), "terms"
         why = "its payment due date; no paid pay apps from this client yet"
     elif terms:
-        on, basis = sent + timedelta(days=terms), "terms"
+        # On a weekend or a federal holiday it is the next business day, as the due date is (Nov 27 audit).
+        on, basis = domain.business_day_on_or_after(sent + timedelta(days=terms)), "terms"
         why = f"{_plural(terms)} payment terms; no paid pay apps from this client yet"
     else:
         usual = domain._int_or(payer.get("usual_approval_days"), None) or PAY_DEFAULT_DAYS

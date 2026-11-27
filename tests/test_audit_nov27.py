@@ -127,6 +127,19 @@ class TicketItemsSplitTests(unittest.TestCase):
         self.assertEqual([(p["required"], p["skipped_reason"]) for p in packet], [(False, "Lump sum"), (False, "Lump sum")])
 
 
+class PredictedPayTermsTests(unittest.TestCase):
+    """Items 24/31: a predicted pay date from payment terms moves off weekends and holidays, as the due date does."""
+    def test_terms_land_on_a_business_day(self):
+        state = {"payers": [{"id": "p-new", "name": "New", "usual_approval_days": 14, "payment_terms_days": 30}], "jobs": []}
+        for sent, want in (("2026-11-06", "2026-12-07"),    # Dec 6, 2026 is a Sunday
+                           ("2026-11-25", "2026-12-28"),    # Dec 25 is Christmas, a Friday
+                           ("2026-11-10", "2026-12-10")):   # a Thursday stays
+            inv = {"id": "inv-1", "number": "PA-1", "status": "sent", "sent_at": f"{sent}T12:00:00+00:00", "amount_cents": 100}
+            job = {"id": "j", "payer_id": "p-new", "invoices": [inv], "payments": []}
+            p = domain.predicted_pay(state, job, inv, today=date(2026, 11, 27))
+            self.assertEqual((p["on"], p["basis"]), (want, "terms"), sent)
+
+
 class ZipStateTests(unittest.TestCase):
     """Item 4: the server asks the page's question about a ZIP from another state; never refuses."""
     def test_the_question_matches_the_page(self):
