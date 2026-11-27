@@ -195,7 +195,8 @@ for $6,400.00, and its Total is **$88,400.00**.
 
 1. On the job page, tap **New job record**. The job is already picked.
 2. **Diary**: `Temporary power set. Ran conduit on level 1. Set panels LP-1 and LP-2.`
-   **Crew members**: `4`.
+   Under **Time sheet**, **Crew member**: **Someone else (type the name)**, **Name**: `Level 1
+   crew`, **Hours**: `32`.
 3. Under **Work done**, in **Today, or % done to date**, type `100` for Temporary power (a %),
    `700` for Branch conduit and wire and `2` for Panelboards. Leave the others blank.
 4. Tap **Save job record**.
@@ -205,12 +206,12 @@ for $6,400.00, and its Total is **$88,400.00**.
 **Job record 2**
 
 1. Same page (or **New job record** again). **Diary**: `Finished level 1 conduit. Hung 40
-   fixtures. Roughed in the EV circuits.` **Crew members**: `5`.
+   fixtures. Roughed in the EV circuits.`
 2. Under **Work done**: `500` for Branch conduit and wire, `40` for Light fixtures, set and
    wired, `50` for CO 1 (a %).
 3. Tap **+ Photos**, then **Choose files** (or **Take a photo**), and pick a photo.
-4. Tap **+ Time sheet**. **Who or which crew**: `Level 1 crew`. **Hours**: `40`. Tap **Choose
-   files** and pick a file.
+4. Under **Time sheet**: **Crew member** **Someone else (type the name)**, **Name** `Level 1
+   crew`, **Hours** `40`. Tap its **Choose files** and pick a file (a photo of the paper sheet).
 5. Tap **Save job record**. "Saved to Peachtree Commons tenant build-out: 1 diary entry, 1
    progress photo, 1 time sheet."
 
@@ -220,21 +221,24 @@ Less retainage 10% **-$3,620.00**, Suggested amount due **$32,580.00**.
 
 ## Step 7. Progress Pay App
 
-1. On the job page, tap **Progress Pay App**. A table opens with **Done to date** already filled
-   in from your job records: 100, 1200, 40, 2, 0 and 50.
-2. Leave **Period to** as today. Tap **Draft progress pay app**.
+1. On the job page, tap **Progress Pay App**. Its own page opens, with the job's pay period, and a
+   table with **Done to date** already filled in from your job records: 100, 1200, 40, 2, 0 and 50.
+2. Leave **Period to** as it is (the pay period's end). Tap **Draft progress pay app**. The draft's
+   own page opens; tap the job's name to go back to the job.
 
-**Checkpoint:** the job page's **Pay apps** card lists **PA-PEAC-01 Draft $32,580.00**, with "3
-supporting documents missing". Under **This billing period**, "On PA-PEAC-01" is **$36,200.00**,
+**Checkpoint:** the job page's **Pay apps** card lists **PA-PEAC-01 Draft $32,580.00**, with "2
+supporting documents missing" (progress photos are a check, not a hard stop). Under **This billing period**, "On PA-PEAC-01" is **$36,200.00**,
 less retainage **-$3,620.00**, Amount due **$32,580.00**.
 
 ## Step 8. The supporting documents it asks for
 
-1. Above the job's buttons, tap **Add or check 3 documents**. The pay app's page opens, with
-   **Missing (3)**:
+1. Above the job's buttons, tap **Add or check 2 documents**. The pay app's page opens, with
+   **Missing (2)**, the hard stops:
    - **Conditional waiver on progress payment**
-   - **Progress photos**
    - **Daily tickets and time sheets**
+
+   **Progress photos** is a check: it is under **Check before it goes** and in **Supporting
+   documents**, where its photo waits for a look.
 2. **Conditional waiver**: tap **Choose file** (or **Take a photo**) on it and pick a file (it
    stands in for the waiver Dana's office would want signed). Duracash can't read a photo, so it
    asks "Which waiver is this?". Tap **Conditional**.
