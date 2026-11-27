@@ -460,6 +460,11 @@ def line_label(entry: dict[str, Any]) -> str:
     pct = (100 * entry["qty_milli_to_date"]) // entry["qty_milli"] if entry["qty_milli"] else 0
     # The amount isn't quantity x rate when it was changed by hand, now or on an earlier pay app.
     note = " (amount adjusted)" if entry.get("suggested_cents") is not None else " (includes an earlier adjustment)" if entry.get("carried") else ""
+    # Materials stored and not yet installed, billed this period: said, so a line at 0% complete
+    # that bills $1,500 doesn't read as a mistake on the pay app and its email.
+    stored_new = entry.get("amount_cents", 0) - entry.get("work_this_cents", entry.get("amount_cents", 0)) if entry.get("stored_cents") else 0
+    if stored_new > 0:
+        note += f", materials stored ${stored_new / 100:,.2f}"
     if entry["unit"].upper() == "LS" and entry["qty_milli"] == 1000:
         return f"{item}{entry['description']} ({pct}% complete to date){note}"
     return (
