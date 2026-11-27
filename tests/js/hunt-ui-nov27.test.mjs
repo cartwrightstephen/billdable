@@ -82,3 +82,8 @@ test("My account says Accent color, in the US spelling the rest of the app uses"
   assert.match(src, /label: "Accent color"/);
   assert.doesNotMatch(src, /"Accent colour"/);
 });
+
+test("a link in a table shown as cards is 44 px tall", () => {
+  const css = readFileSync(new URL("../../static/styles.css", import.meta.url), "utf8");
+  assert.match(css, /@media \(max-width: 800px\) \{\n  #view table\.stack td > a \{ display: inline-flex; align-items: center; min-height: 44px; \}/);
+});
