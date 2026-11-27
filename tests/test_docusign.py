@@ -347,6 +347,25 @@ class DocusignHttp(ServerCase):
         self.assertFalse(any(v.get("company_id") == self.cid for v in docusign._PENDING.values()))
         self.assertNotIn(state, docusign._PENDING)
 
+    def test_the_webhook_and_callback_pass_the_cross_site_check(self):  # sec1 M1
+        # DocuSign Connect posts from DocuSign's servers: exempt from the Origin check like the other
+        # webhooks, so its HMAC check is what answers.
+        cross = {"Origin": "https://www.docusign.net", "Sec-Fetch-Site": "cross-site"}
+        res, data = self.request("POST", "/api/docusign/webhook", raw=b'{"data":{"envelopeId":"e"}}', headers=cross)
+        self.assertEqual(res.status, 401, data)
+        body = json.dumps({"event": "envelope-sent", "data": {"envelopeId": "not-ours"}}).encode()
+        res, _ = self.request("POST", "/api/docusign/webhook", raw=body, headers={**cross, "X-DocuSign-Signature-1": sign_body(body)})
+        self.assertEqual(res.status, 200)
+        # The OAuth callback is a top-level GET navigation back from DocuSign: no Origin check.
+        state = self.connect()
+        res, _ = self.request("GET", f"/api/docusign/callback?code=good-code&state={state}", cookie=self.cookie,
+                              headers={"Sec-Fetch-Site": "cross-site", "Referer": "https://account-d.docusign.com/"})
+        self.assertEqual((res.status, res.getheader("Location")), (303, "/settings/company"))
+        # The app's own DocuSign posts from another site are still refused.
+        res, data = self.request("POST", "/api/docusign/disconnect", {}, cookie=self.cookie, headers={"Origin": "https://evil.example"})
+        self.assertEqual(res.status, 403)
+        self.assertTrue(docusign.connected(self.cid))
+
     def test_the_callback_finishes_only_for_who_pressed_connect(self):
         other, _ = self.signup("ds-other@sign.example", "Other Co")
         state = self.connect()

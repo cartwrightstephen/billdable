@@ -1345,7 +1345,7 @@ class Handler(BaseHTTPRequestHandler):
     # Posted by services, not browsers, each with its own check: the email service and Twilio
     # (token and signature or password), the mail provider's events (token), Stripe (signature),
     # and the phone's share menu (Sec-Fetch-Site, _share_target).
-    CROSS_SITE_OK = ("/api/inbound/", "/api/mail-events/", "/api/stripe/webhook", "/share")
+    CROSS_SITE_OK = ("/api/inbound/", "/api/mail-events/", "/api/stripe/webhook", "/api/docusign/webhook", "/share")
     # The bodies a cross-site HTML form can send without the browser asking first (M1).
     FORM_TYPES = ("application/x-www-form-urlencoded", "multipart/form-data", "text/plain")
 
