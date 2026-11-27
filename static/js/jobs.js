@@ -1,6 +1,6 @@
 // Where a job stands: blocked or not, the one next step, status pills, change-order signatures and waiver kinds.
 
-import { unesc, fmtDate, fmtDateTime, toDate, centsFrom, percentFrom, money, words } from "./format.js";
+import { unesc, fmtDate, fmtDateTime, toDate, centsFrom, percentFrom, money, words, waitingForSignature } from "./format.js";
 import { termText } from "./terms.js";
 
 // The job record's kinds, as domain.RECORD_KINDS and importer.KINDS have them.
@@ -39,7 +39,7 @@ export function jobStatus(j) {
   const inv = j.invoices || [];
   if (j.closed) return ["Closed", "green"];
   if (isBlocked(j)) return needsPaperwork(j) ? ["Needs supporting documents", "amber"] : ["Blocked", "red"];
-  if (inv.some(i => ["draft", "awaiting_approval"].includes(i.status))) return ["Ready to send", "copper"];
+  if (inv.some(i => ["draft", "awaiting_approval"].includes(i.status))) return inv.some(waitingForSignature) ? ["Waiting for signature", "copper"] : ["Ready to send", "copper"];
   if (j.waiver_due && !j.waiver_sent) return ["Waiver due", "amber"];
   if (inv.some(i => i.status === "partial")) return ["Partly paid", "amber"];
   if (inv.some(i => i.status === "sent")) return ["Sent", "amber"];

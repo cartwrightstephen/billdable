@@ -97,3 +97,14 @@ test("the browser tab says Edit job record while a saved one is being changed", 
   const app = readFileSync(new URL("../../static/app.js", import.meta.url), "utf8");
   assert.match(app, /if \(currentView === "daily" && daily\.editing\) return "Edit job record · Duracash";/);
 });
+
+test("a pay app waiting on a signature says so, not Ready to send", async () => {
+  const { invoicePill } = await import("../../static/js/format.js");
+  const { jobStatus } = await import("../../static/js/jobs.js");
+  const waiting = { status: "awaiting_approval", approval: { waiting: ["Dana Whitfield"] } };
+  const signed = { status: "awaiting_approval", approval: { waiting: [] } };
+  assert.match(invoicePill(waiting), />Waiting for signature</);
+  assert.match(invoicePill(signed), />Ready to send</);
+  assert.match(invoicePill({ status: "draft", approval: { waiting: ["Dana"] } }), />Draft</);
+  assert.deepEqual(jobStatus({ invoices: [waiting], blockers: [], packet: [] }), ["Waiting for signature", "copper"]);
+});
