@@ -43,7 +43,7 @@ class ConfigTests(unittest.TestCase):
     def test_production_complete_config_starts(self):
         with self.env(**GOOD, DURACASH_DATA_DIR=self.tmp.name), mock.patch.object(storage, "DATA_DIR", Path(self.tmp.name)):
             self.assertTrue(server.production())
-            self.assertFalse(server.demo_enabled())
+            self.assertEqual(server.demo_mode(), "readonly", "production keeps the sample company, read-only")
             self.assertEqual(server.config_problems(), [])
 
     def test_production_refuses_each_missing_setting(self):
@@ -117,7 +117,7 @@ class ProductionHttpTests(unittest.TestCase):
         res, _ = self.demo_login()
         self.assertEqual(res.status, 200)
         cookie = res.getheader("Set-Cookie").split(";")[0]
-        with mock.patch.dict(os.environ, {"DURACASH_ENV": "production"}):
+        with mock.patch.dict(os.environ, {"DURACASH_ENV": "production", "DURACASH_DEMO": "off"}):
             res, _ = self.request("GET", "/api/state", cookie=cookie)
             self.assertEqual(res.status, 401, "an existing demo session stops working")
             res, _ = self.request("GET", "/api/auth/me", cookie=cookie)

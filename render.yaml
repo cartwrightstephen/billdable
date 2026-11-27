@@ -19,7 +19,7 @@ services:
     envVars:
       - key: DURACASH_DATA_DIR
         value: /var/data
-      # Production refuses to start without the settings below and turns the demo account off.
+      # Production refuses to start without the settings below. Its demo is read-only (DURACASH_DEMO=off removes it).
       - key: DURACASH_ENV
         value: production
       # Keep the sample company available for prospects (readonly: look around, no changes).

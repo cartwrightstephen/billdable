@@ -26,9 +26,10 @@ PASSWORD = "correct horse battery"
 
 class DemoModeTests(unittest.TestCase):
     def test_modes(self):
-        cases = [({}, "on"), ({"DURACASH_ENV": "production"}, "off"),
+        cases = [({}, "on"), ({"DURACASH_ENV": "production"}, "readonly"),
                  ({"DURACASH_ENV": "production", "DURACASH_DEMO": "readonly"}, "readonly"),
-                 ({"DURACASH_ENV": "production", "DURACASH_DEMO": "on"}, "off"),
+                 ({"DURACASH_ENV": "production", "DURACASH_DEMO": "on"}, "readonly"),
+                 ({"DURACASH_ENV": "production", "DURACASH_DEMO": "off"}, "off"),
                  ({"DURACASH_DEMO": "off"}, "off"), ({"DURACASH_DEMO": "readonly"}, "readonly")]
         for env, want in cases:
             with mock.patch.dict("os.environ", {"DURACASH_ENV": "", "DURACASH_DEMO": "", **env}):
@@ -140,7 +141,7 @@ class ReadOnlyHttpTests(unittest.TestCase):
                 res, data = self.request("POST", path, {"from": "x@example.com", "text": "spam"})
                 self.assertEqual((res.status, data.get("ignored")), (200, "the demo is read-only"), path)
             self.assertEqual(len(server.load_company(auth.DEMO_COMPANY_ID).get("inbox", [])), inbox_before)
-        with mock.patch.dict("os.environ", {"DURACASH_ENV": "production", "DURACASH_DEMO": ""}):
+        with mock.patch.dict("os.environ", {"DURACASH_ENV": "production", "DURACASH_DEMO": "off"}):
             res, _ = self.request("GET", "/api/state", cookie=cookie)
             self.assertEqual(res.status, 401, "with the demo off, its sessions stop working")
 
