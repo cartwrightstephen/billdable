@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 import textwrap
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 import sov
@@ -22,6 +22,15 @@ PAGE_W, PAGE_H = 792, 612
 MARGIN = 36
 LIVE = sov.LIVE_STATUSES
 
+
+
+def _long_day(iso: Any) -> str:
+    """"January 25, 2027" (as domain._long_day; this module can't import domain)."""
+    try:
+        d = date.fromisoformat(str(iso)[:10])
+    except ValueError:
+        return str(iso or "")
+    return f"{d.strftime('%B')} {d.day}, {d.year}"
 
 def _money(cents: int) -> str:
     sign = "-" if cents < 0 else ""
@@ -214,7 +223,7 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
         p.right(PAGE_W - MARGIN, y, f"Period to {invoice['period_to']}", 10)
     if invoice.get("due_on"):
         y -= 14
-        p.right(PAGE_W - MARGIN, y, f"Payment due {invoice['due_on']}", 10)
+        p.right(PAGE_W - MARGIN, y, f"Payment due {_long_day(invoice['due_on'])}", 10)
     elif invoice.get("final") and status != "void" and not invoice.get("period_to"):
         y -= 14
     y -= 20

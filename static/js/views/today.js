@@ -402,9 +402,17 @@ export const views = {
       if (j.waiver_sent_at) add(j.waiver_sent_at, `${j.code} waiver sent`, "waiver", j.id);
       if (j.waiver_due && !j.waiver_sent) add(todayKey, `${j.code} waiver ready`, "waiver", j.id);
       if (j.closed_at) add(j.closed_at, `${j.code} finished`, "paid", j.id);
+      // The client's cutoff each month, never before the job starts and on a business day (Nov 26):
+      // the server's next due date, then the same day of later months.
       const dueDay = Number(unesc(String(j.payer.payapp_due_day || "")));
-      if (dueDay && !j.closed && (j.work_status !== "complete" || j.money.unbilled_completed_cents > 0))
-        add(localDay(new Date(calYear, calMonth, Math.min(dueDay, daysInMonth))), `${j.code} ${termText("pay app due to")} ${j.payer.name}`, "", j.id);
+      const first = unesc(j.payapp_due_on || "");
+      if (dueDay && first && !j.closed && (j.work_status !== "complete" || j.money.unbilled_completed_cents > 0)) {
+        let day = new Date(calYear, calMonth, Math.min(dueDay, daysInMonth));
+        while (day.getDay() === 0 || day.getDay() === 6) day.setDate(day.getDate() - 1);
+        const shown = localDay(day);
+        if (shown.slice(0, 7) === first.slice(0, 7)) add(first, `${j.code} ${termText("pay app due to")} ${j.payer.name}`, "", j.id);
+        else if (shown > first) add(shown, `${j.code} ${termText("pay app due to")} ${j.payer.name}`, "", j.id);
+      }
     });
     const cells = [];
     for (let i = 0; i < startDow; i++) cells.push({ other: true });
@@ -518,6 +526,8 @@ export const actions = {
     if (r && r.ok) toast("Task added.");
   },
   "task-done": async (el, id) => { const r = await post(`/api/tasks/${encodeURIComponent(id)}/done`, { done: true }, { quiet: true }); if (r && r.ok) toast("Done."); },
+  // A reminder put away for the day (Nov 26: no job record yesterday, a change order with no work).
+  "dismiss-row": (el, id) => post(`/api/jobs/${id}/dismiss-row`, { key: unesc(el.dataset.key || "") }, { quiet: true }),
   "dismiss-help": () => { helpDismissed = true; try { localStorage.setItem("duracash-help-dismissed", "1"); } catch (_) { /* hidden for this visit */ } render(); },
   "filter": (el) => { dashFilter = el.dataset.filter; render(); },
   "sort": (el) => {

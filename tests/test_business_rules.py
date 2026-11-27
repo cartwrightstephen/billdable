@@ -284,10 +284,12 @@ class FirstPayAppPaperworkTests(unittest.TestCase):
     def test_gc_default_list_leaves_out_the_pay_app_and_schedule(self):
         state = {"company": {"name": "T"}, "payers": [], "jobs": [], "audit": [], "email_log": []}
         job = self.gc_job(state)
-        self.assertEqual(state["payers"][0]["packet"], "Conditional waiver, Insurance certificate, Daily tickets and time sheets")
+        self.assertEqual(state["payers"][0]["packet"], "Conditional waiver, Insurance certificate, Daily tickets, Time sheets")
         domain.record_progress(state, job["id"], 400_000)
         labels = [p["label"] for p in domain.missing_packet(job)]
-        self.assertEqual(labels, ["Conditional waiver", "Insurance certificate", "Daily tickets and time sheets"])
+        self.assertEqual(labels, ["Conditional waiver", "Insurance certificate"], "daily tickets and time sheets are checks (Nov 26)")
+        draft = [i for i in job["invoices"] if i["status"] in domain.DRAFT_STATUSES][-1]
+        self.assertEqual([p["label"] for p in domain.soft_checks_waiting(job, draft)], ["Daily tickets", "Time sheets"])
         self.assertFalse([b for b in domain.blocker_lines(job) if "pay app" in b.lower() or "schedule" in b.lower()])
 
     def test_owner_backup_is_needed_only_without_a_schedule(self):

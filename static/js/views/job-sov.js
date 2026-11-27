@@ -6,7 +6,7 @@ import { readJson, setNetBanner } from "../net.js";
 import { askConfirm } from "../dom.js";
 import { field, formValues, formErrorLine, refuseForm, clearForm } from "../forms.js";
 import { termText } from "../terms.js";
-import { state, formOpen, onSessionEnd } from "../state.js";
+import { state, formOpen, onSessionEnd, currentView } from "../state.js";
 import { perms, post, toast, render, nav } from "../app-core.js";
 import { qtyImportForJob } from "./data.js";
 
@@ -310,7 +310,15 @@ async function sovProgress(jobId) {
   });
   const notes = document.querySelector("#progress-notes")?.value || "";
   const r = await post(`/api/jobs/${jobId}/sov-progress`, { done, stored, notes, period_to: formValues("sovprogress").period_to || "" }, { formKey: "sovprogress" });
-  if (r && r.ok) { formOpen.progress = false; render(); }
+  if (r && r.ok) { formOpen.progress = false; progressDone(jobId); }
+}
+
+// Drafted from the Progress pay app page (Nov 26): the draft's own page, to review and send it.
+export function progressDone(jobId) {
+  const j = state.jobs.find(x => x.id === jobId);
+  const draft = j && (j.invoices || []).find(i => ["draft", "awaiting_approval"].includes(i.status));
+  if (currentView === "payapp-new" && draft) nav("payapp-detail", jobId, draft.id);
+  else render();
 }
 
 document.addEventListener("input", (e) => {

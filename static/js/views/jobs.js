@@ -44,6 +44,9 @@ export function jobFields(form, prefix, j = {}) {
       ...mark("started_on"), attrs: `min="${limits.min}" max="${limits.max}"${contractMark(form, "started_on").attrs ? " data-from-contract" : ""}` }),
     // Blank until it is known; never before the start date (domain.parse_end_date).
     anticipated_end_on: f({ name: "anticipated_end_on", id: `${prefix}-end`, label: "Anticipated end date", type: "date", value: unesc(j.anticipated_end_on || ""), ...mark("anticipated_end_on") }),
+    // The contract's pay period (Nov 26: "16th to the 15th" is 15). Blank: the client's pay app day, else the month's end.
+    period_end_day: f({ name: "period_end_day", id: `${prefix}-period-end`, label: "Pay period ends on (day of the month)", inputmode: "numeric", autocomplete: "off",
+      value: j.period_end_day ? String(j.period_end_day) : "", placeholder: "15", help: "From the contract: 15 for a period from the 16th to the 15th. Blank uses the pay app day, else the month's end." }),
   };
 }
 
@@ -471,6 +474,7 @@ export const views = {
             ${jf.anticipated_end_on}
             ${slot("payapp_due_day", f({ name: "payapp_due_day", id: "nj-due-day", label: "Pay apps due by (day of the month)", helpKey: "payapp_due_day", inputmode: "numeric", autocomplete: "off", ...mark("payapp_due_day") }))}
             ${slot("payment_terms_days", f({ name: "payment_terms_days", id: "nj-terms", label: "Payment terms, days", helpKey: "payment_terms_days", inputmode: "numeric", autocomplete: "off", ...mark("payment_terms_days") }))}
+            ${jf.period_end_day}
             ${jf.contract_number}
             ${assigneeField("newjob", "nj")}
             ${f({ name: "note", id: "nj-note", label: "Notes (kept in the job records)", helpKey: "job_notes", multiline: true, wide: true, placeholder: "Gate code, who to call, contract notes" })}
@@ -588,6 +592,7 @@ export const actions = {
       ap_email: apEmail, phone, client_type: asked("client_type") ? v.client_type : "",
       contract_number: v.contract_number, note: v.note, started_on: v.started_on || "", anticipated_end_on: v.anticipated_end_on || "", today: localDay(new Date()),
       ...(v.assignee_id ? { assignee_id: v.assignee_id } : {}),
+      ...(v.period_end_day ? { period_end_day: v.period_end_day } : {}),
       contract_cents: amount.cents, retainage_pct: ret.value, ...days,
       new_customer: !known && keptNames.newjob === customer,
       new_job: !!keptJobName && keptJobName === v.name,

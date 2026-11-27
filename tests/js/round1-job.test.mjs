@@ -47,7 +47,7 @@ test("a Member doesn't see Edit job, Final pay app, Bill now, Signed on paper or
     assert.doesNotMatch(mine, new RegExp(hidden), hidden);
   }
   assert.match(mine, /data-action="request-co-signature"/, "asking for a signature stays");
-  assert.match(mine, /data-form="progress"/, "progress stays");
+  assert.match(mine, /data-action="progress-open"/, "progress stays");
   const owners = draw(j, owner);
   for (const shown of ['data-form="editjob"', 'data-form="done"', 'data-action="include-co"', 'data-action="withdraw-co"', "Signed on paper"]) {
     assert.match(owners, new RegExp(shown), shown);
@@ -89,10 +89,17 @@ test("Before you can finish this job keeps its list but not the buttons already 
 });
 
 // ---------- 10: the lump-sum box and dollars ----------
+// Progress pay app is its own page (Nov 26).
+function drawProgress(j) {
+  page.setMe(owner);
+  core.setState({ ...company(), jobs: [j], payers: [j.payer] });
+  page.setLocation("payapp-new", j.id);
+  return reg.views["payapp-new"]();
+}
+
 test("a lump-sum line's box says % done, and a one-line schedule offers Bill by dollars instead", () => {
   phone(false);
-  page.formOpen.progress = true;
-  const html = draw(job());
+  const html = drawProgress(job());
   assert.match(html, /aria-label="Contract amount: % done to date"/);
   assert.match(html, /data-label="% done to date"/);
   assert.match(html, /data-action="progress-dollars"/);
@@ -100,8 +107,8 @@ test("a lump-sum line's box says % done, and a one-line schedule offers Bill by 
   // Two lines: no dollar form.
   const two = job();
   two.sov_view = { ...two.sov_view, auto: false, lines: [lump({ scheduled_cents: 2000000, rate_cents: 2000000 }), lump({ id: "l2", lump_sum: false, unit: "ft", qty_milli: 100000, rate_cents: 28500, scheduled_cents: 2850000 })] };
-  assert.doesNotMatch(draw(two), /progress-dollars/);
-  page.formOpen.progress = false;
+  assert.doesNotMatch(drawProgress(two), /progress-dollars/);
+  assert.match(html, /<h1>Progress pay app<\/h1>/i);
 });
 
 test("Bill by dollars on a one-line schedule: what is typed becomes the line's % done and its exact amount", () => {

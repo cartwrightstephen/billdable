@@ -521,7 +521,8 @@ export function jobActions(j, { now = new Date(), demo = false, perms = null } =
   // A conversation goes through New job record (Stephen, Nov 26): its Conversation / note with
   // client section counts as a follow-up while a pay app waits, as Log a conversation did (R4-06).
   if (j.work_status === "complete" && !draft && m.unbilled_completed_cents > 0) add("draft", "Draft pay app", `data-action="draft" data-id="${j.id}"`, "bill");
-  if (j.work_status !== "complete") add("progress", "Progress pay app", `data-action="toggle-form" data-form="progress"`, "bill");
+  // Its own page (Nov 26): /money/new-pay-app/{job}.
+  if (j.work_status !== "complete") add("progress", "Progress pay app", `data-action="progress-open" data-id="${j.id}"`, "bill");
   if (j.work_status === "complete" && closeoutMissing(j)) add("closeout", "Open closeout documents", closeoutAttrs(j), "close");
   if (j.work_status !== "complete") add("done", "Final pay app", `data-action="toggle-form" data-form="done"`, "close");
   if (canClose) add("close", "Finish job", `data-action="close" data-id="${j.id}"`, "close");

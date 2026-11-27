@@ -593,6 +593,16 @@ export const actions = {
     nav("daily");
     focusAfterDraw(() => document.getElementById("daily-conversation-text-0"));
   },
+  // A signed change order with no work recorded (the Dashboard, Nov 26): its work section, on that job.
+  "daily-co-work": (el, id) => {
+    if (daily.editing) { resetDaily(); clearForm("daily"); }
+    if (id) rememberDailyJob(id);
+    nav("daily");
+    daily.checked.add("co_work");
+    (formDraft.daily ||= {}).co_0 = el.dataset.co || "";
+    render();
+    focusAfterDraw(() => document.getElementById("daily-co-desc-0"));
+  },
   // Edit on a saved job record: the same form, filled in (Nov 26).
   "daily-edit": (el, id) => {
     const j = state.jobs.find(x => x.id === id);

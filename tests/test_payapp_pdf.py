@@ -31,13 +31,14 @@ class PeriodAndDueTests(unittest.TestCase):
         domain.record_progress(state, job["id"], 4_000_000, period_end=today.isoformat())
         inv = send_open(state, job)
         self.assertEqual(inv["period_to"], today.isoformat())
-        self.assertEqual(inv["due_on"], (today + timedelta(days=30)).isoformat())
+        # 30 days from the day it went out, on a business day (Nov 26), and in words.
+        self.assertEqual(inv["due_on"], domain.business_day_on_or_after(today + timedelta(days=30)).isoformat())
         pdf = pdf_text(state, job, inv)
         self.assertIn(f"Period to {today.isoformat()}".encode(), pdf)
-        self.assertIn(f"Payment due {inv['due_on']}".encode(), pdf)
+        self.assertIn(f"Payment due {domain._long_day(inv['due_on'])}".encode(), pdf)
         self.assertNotIn(b"FINAL APPLICATION", pdf)
         mail = state["email_log"][-1]
-        self.assertIn(f"Payment due {inv['due_on']}.", mail["body"])
+        self.assertIn(f"Payment due {domain._long_day(inv['due_on'])}.", mail["body"])
         self.assertTrue(mail["subject"].endswith(f"period to {today.isoformat()}"))
 
     def test_period_defaults_to_today_and_cannot_go_back(self):

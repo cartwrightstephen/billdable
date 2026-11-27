@@ -1,6 +1,6 @@
 // Schedule of values: quantities in thousandths, money in cents, and the continuation sheet (G703 columns).
 
-import { esc, money, plainNumber, fmtDate } from "./format.js";
+import { esc, unesc, money, plainNumber, fmtDate } from "./format.js";
 import { draftValue } from "./forms.js";
 
 // ---------- schedule of values ----------
@@ -164,7 +164,10 @@ export function sovProgressHtml(j, periodHtml = "", errorLine = "", extra = "") 
   const replaces = (j.invoices || []).find(i => ["draft", "awaiting_approval"].includes(i.status) && i.pencil_status !== "sent");
   // Filled in from the field total, or the open draft's own figure when one was typed for it (or
   // what is billed, when that is more); a line billed in full is closed. A blank box bills the suggestion.
-  const rows = v.lines.map(l => { const start = Math.max(l.form_done_milli ?? l.done_milli, l.sent_qty_milli ?? l.billed_qty_milli ?? 0), closed = (l.sent_qty_milli ?? l.billed_qty_milli ?? 0) >= l.qty_milli; return `
+  // Only what was recorded within the pay period (Nov 26): what job records put on a line after the
+  // period ends waits for the next pay app (domain.job_view pay_period.after_milli).
+  const after = (j.pay_period && j.pay_period.after_milli) || {};
+  const rows = v.lines.map(l => { const start = Math.max((l.form_done_milli ?? l.done_milli) - (after[unesc(l.id)] || 0), l.sent_qty_milli ?? l.billed_qty_milli ?? 0), closed = (l.sent_qty_milli ?? l.billed_qty_milli ?? 0) >= l.qty_milli; return `
     <tr>
       <td>${l.item}</td><td class="sov-desc-cell">${l.description}</td>
       <td class="num">${l.lump_sum ? "lump sum" : fmtQty(l.qty_milli) + " " + l.unit}</td>
@@ -172,7 +175,8 @@ export function sovProgressHtml(j, periodHtml = "", errorLine = "", extra = "") 
       <td><input id="sovp-stored-${l.id}" class="sov-in sov-num" data-sovs="${l.id}" data-field="stored_${l.id}" value="${typed(`stored_${l.id}`, l.stored_cents ? (l.stored_cents / 100).toFixed(2) : "")}" inputmode="decimal" aria-label="${l.description}: materials stored, dollars" ${closed ? "disabled" : ""}></td>
       <td class="sub">${l.billed_qty_milli ? `billed ${l.lump_sum ? (l.billed_qty_milli / 10).toFixed(1) + "%" : fmtQty(l.billed_qty_milli)}` : ""}</td>
     </tr>`; }).join("");
-  return `<div class="card sov-progress">${sovPeriodHtml(j)}<div data-form-key="sovprogress">${errorLine}
+  const later = Object.values(after).some(Boolean) && j.pay_period ? `<p class="sub period-later">Quantities recorded after ${fmtDate(j.pay_period.to)} wait for the next pay app.</p>` : "";
+  return `<div class="card sov-progress">${sovPeriodHtml(j)}${later}<div data-form-key="sovprogress">${errorLine}
     <div class="table-wrap sov-wrap"><table class="sov-table">
       <tr><th>Item</th><th>Description</th><th>Scheduled</th><th>Done to date</th><th>Stored materials $</th><th></th></tr>
       ${rows}

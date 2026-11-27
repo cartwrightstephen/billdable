@@ -577,7 +577,7 @@ def _crew_from_sheet(details: dict[str, Any], entries: list[dict[str, Any]]) -> 
 
 
 def save_job_record(state: dict[str, Any], job_id: str, notes: str, actor: str, body: dict[str, Any],
-                    report: dict[str, list] | None = None) -> dict[str, Any]:
+                    report: dict[str, list] | None = None, gate_over: bool = False) -> dict[str, Any]:
     """What the New job record form saves: the Diary and the day's details as a daily record, when
     there are any, and one job record per file or filled section. A document alone needs no Diary;
     the day's details do. Nothing is written if any of it is refused. A file the form lists that it
@@ -615,7 +615,7 @@ def save_job_record(state: dict[str, Any], job_id: str, notes: str, actor: str, 
         details["attachments"] = list(body.get("attachments") or []) + [rid for e in entries for rid in e["attachments"]]
         _crew_from_sheet(details, entries)
         at = None if day == local_today(body.get("today")) else f"{day}T12:00:00+00:00"
-        add_daily_record(state, job_id, notes, actor, at=at, details=details, gate_over=True)
+        add_daily_record(state, job_id, notes, actor, at=at, details=details, gate_over=gate_over)
         daily_id = state["daily_records"][-1]["id"]
     for entry in entries:
         _apply_entry(state, job, entry, day, actor, daily_id)

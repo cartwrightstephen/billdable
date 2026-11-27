@@ -251,7 +251,8 @@ class WholeClientWaiverRule(Base):
         self.assertIn("waiver_not_needed", self.payer())
 
     def test_holding_company_does_both(self):
-        self.give_member(["company"])
+        # The conditional waiver is a hard stop: letting it go takes send_payapps too (Nov 26).
+        self.give_member(["company", "send_payapps"])
         self.assertEqual(self.skip(self.bob, whole_client=True)[0], 200)
         self.assertIn("waiver_not_needed", self.payer())
         status, data = self.post(f"/api/payers/{self.payer_id}/waiver-needed", {}, cookie=self.bob)
@@ -259,6 +260,8 @@ class WholeClientWaiverRule(Base):
         self.assertNotIn("waiver_not_needed", self.payer())
 
     def test_on_the_job_a_member_does_both(self):
+        self.assertEqual(self.skip(self.bob)[0], 409, "a hard stop: only someone who can send pay apps lets it go (Nov 26)")
+        self.give_member(["send_payapps"])
         self.assertEqual(self.skip(self.bob)[0], 200)
         self.assertTrue(self.job().get("waiver_skipped"))
         status, data = self.post(f"/api/jobs/{self.job_id}/waiver-needed", {}, cookie=self.bob)

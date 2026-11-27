@@ -80,10 +80,10 @@ JOB_ACTION_PERMS: dict[str, str | None] = {
     # Drafting, records, paperwork and follow-ups: everyone on the team.
     "sov-amounts": None, "sov-correct": None, "quantities-undo": None, "waiver-needed": None,
     "progress": None, "sov": None, "sov-progress": None, "draft": None,
-    "resolve": None, "packet-skip": None, "follow-up": None, "note-contact": None, "paperwork": None,
+    "resolve": None, "packet-skip": None, "packet-soft-check": None, "follow-up": None, "note-contact": None, "paperwork": None,
     "add-co": None, "request-co-signature": None,
     "attach": None, "detach": None, "add-evidence": None, "add-record": None, "attach-record": None, "packet-confirm": None, "packet-recheck": None,
-    "edit-record": None, "daily-record": None, "daily-record-edit": None, "pencil": None, "pencil-response": None,
+    "edit-record": None, "daily-record": None, "daily-record-edit": None, "dismiss-row": None, "pencil": None, "pencil-response": None,
     "learn-rejection": None, "import-qbo": None,
     # Added on dev by the other streams of the Oct 29 review (anyone, as they shipped).
     "waiver-type": None, "record-work": None, "co-logged": None, "co-work-started": None,

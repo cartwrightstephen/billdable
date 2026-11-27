@@ -48,7 +48,7 @@ export const ACTION_WORDS = {
   payapp_approved: "Pay app approved", payapp_approval_cleared: "Pay app approval cleared", approvers_set: "Pay app approvers changed",
   add_record: "Added to the job records", edit_record: "Job record changed",
   add_evidence: "Added to the job records", attach_record: "Supporting documents added", packet_attachment: "Supporting documents added",
-  packet_resolved: "Override: I have this", packet_confirmed: "Document checked", document_flagged: "Document check warning", paperwork_detached: "Supporting documents taken off", paperwork_not_needed: "Supporting documents not needed", paperwork_needed: "Supporting document needed again",
+  packet_resolved: "Override: I have this", packet_soft_check: "Supporting document checked before sending", job_paperwork_gates: "Hard stops and checks changed", daily_record_edit: "Job record changed", row_dismissed: "Reminder dismissed", packet_confirmed: "Document checked", document_flagged: "Document check warning", paperwork_detached: "Supporting documents taken off", paperwork_not_needed: "Supporting documents not needed", paperwork_needed: "Supporting document needed again",
   field_total_corrected: "Field total corrected", quantities_import_undone: "Quantity import undone", overbilling_settled: "Overbilling refunded or credited", overbilling_settled_dropped: "Refund or credit no longer counts", retainage_credited: "Signed credit taken off retainage", waiver_looked_at: "Waiver file looked at",
   daily_record: "Job record saved", pencil_sent: "Draft sent for their review", pencil_response: "Client answered the draft",
   payer_received: "Client opened it", payer_approved: "Client approved", payer_question: "Client asked a question",

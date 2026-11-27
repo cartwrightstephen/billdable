@@ -2909,6 +2909,7 @@ class Handler(BaseHTTPRequestHandler):
             # J1: the address in four parts; a page that sends only "address" still works.
             address_parts=_address_parts(body), client_type=_text(body, "client_type"),
             started_on=_text(body, "started_on"), anticipated_end_on=_text(body, "anticipated_end_on"),
+            period_end_day=_text(body, "period_end_day"),
             assignee_id=assignee_id, assignee_name=assignee_name,
             # S12: what an imported contract said about the client's pay app day and terms.
             payer_days={k: body.get(k) for k in ("payapp_due_day", "payment_terms_days") if k in body},
@@ -3418,7 +3419,8 @@ def _skip_item(st: dict, j: str, i: str, c: "Ctx") -> dict:
     whole_client = c.body.get("whole_client") is True
     if whole_client and not on_client:
         raise OwnerOnly()
-    return domain.skip_packet_item(st, j, i, _text(c.body, "reason"), c.actor, whole_client=whole_client, on_client=on_client)
+    return domain.skip_packet_item(st, j, i, _text(c.body, "reason"), c.actor, whole_client=whole_client, on_client=on_client,
+                                   may_override=profiles.has_perm(c.user, "send_payapps", st))
 
 
 def _send_payapp(h, st, j, i, c):
@@ -3427,8 +3429,10 @@ def _send_payapp(h, st, j, i, c):
     override = _text(c.body, "unconditional_override").strip()
     if override and c.user.get("role", "owner") != "owner":
         raise domain.GateError("Only an owner can send a pay app with an unconditional waiver attached.")
+    soft = c.body.get("soft_checks")
     return domain.approve_and_send(st, j, c.actor, unconditional_override=override, reviewed=_text(c.body, "reviewed"),
-                                   read_file=_file_reader(c.company_id, c.read_ahead), **_co_args(c))
+                                   read_file=_file_reader(c.company_id, c.read_ahead), soft_checks=soft if isinstance(soft, dict) else None,
+                                   today=_text(c.body, "today"), **_co_args(c))
 
 
 def _received_on(body: dict) -> str | None:
@@ -3465,7 +3469,7 @@ def _assignee(c: Ctx, user_id: str) -> tuple:
 
 def _edit_job(h, st, j, i, c):
     body = c.body
-    updates = {k: _text(body, k) for k in ("name", "address", "contract_number", "started_on", "anticipated_end_on") if k in body}
+    updates = {k: _text(body, k) for k in ("name", "address", "contract_number", "started_on", "anticipated_end_on", "period_end_day") if k in body}
     updates.update(_address_parts(body) or {})
     if "assignee_id" in body:
         updates["assignee_id"], updates["assignee_name"] = _assignee(c, _text(body, "assignee_id"))
@@ -3578,7 +3582,11 @@ JOB_ACTIONS = {
     "waiver-answer": (True, lambda h, st, j, i, c: domain.answer_waiver_question(st, j, i, _text(c.body, "answer"), c.actor, shown=_shown(c.body), answerer=_answerer(c, st))),
     "retainage-credit": (False, lambda h, st, j, i, c: domain.apply_credit_to_retainage(st, j, _text(c.body, "reason"), c.actor,
                                                                                          amount_cents=_number(c.body, "amount_cents", "the amount") if c.body.get("amount_cents") not in (None, "") else None)),
-    "resolve": (True, lambda h, st, j, i, c: domain.resolve_packet_item(st, j, i, c.actor, reason=_text(c.body, "reason"))),
+    # "I have this" on a hard stop is an override: only someone who can send pay apps (Nov 26).
+    "resolve": (True, lambda h, st, j, i, c: domain.resolve_packet_item(st, j, i, c.actor, reason=_text(c.body, "reason"),
+                                                                         may_override=profiles.has_perm(c.user, "send_payapps", st))),
+    # A soft gate's answer at Review & send: checked, or not needed this time (Nov 26).
+    "packet-soft-check": (True, lambda h, st, j, i, c: domain.soft_check_packet_item(st, j, i, _text(c.body, "answer"), c.actor, _text(c.body, "note"))),
     "draft": (False, lambda h, st, j, i, c: domain.draft_invoice(st, j, actor=c.actor, strict=True)),
     "send": (False, _sends("the pay app", _send_payapp)),
     "follow-up": (False, _sends("the follow-up", lambda h, st, j, i, c: domain.record_follow_up(st, j, c.actor, early=c.body.get("early") is True, **_co_args(c)))),
@@ -3641,10 +3649,13 @@ JOB_ACTIONS = {
     "accept-short-pay": (True, lambda h, st, j, i, c: domain.settle_short_pay(st, j, i, _text(c.body, "reason"), c.actor)),
     "void-sent": (True, _sends("the email", lambda h, st, j, i, c: domain.void_sent_pay_app(st, j, i, _text(c.body, "reason"), c.actor))),
     "edit": (False, _edit_job),
+    # Dismiss a Dashboard reminder (Nov 26): no job record that day, a change order with no work.
+    "dismiss-row": (False, lambda h, st, j, i, c: domain.dismiss_row(st, j, _text(c.body, "key"), c.actor)),
     "paperwork": (False, lambda h, st, j, i, c: domain.set_job_paperwork(st, j, c.body, c.actor)),
     "delete": (False, lambda h, st, j, i, c: domain.delete_job(st, j, c.actor)),
     # The New job record form: the Diary and the day's details, and each document section (T11, T12, M1).
-    "daily-record": (False, lambda h, st, j, i, c: domain.save_job_record(st, j, _text(c.body, "notes"), c.actor, c.body, c.reply)),
+    # A quantity past what its line has left asks first (gate_over; over_ok records it anyway, Nov 26).
+    "daily-record": (False, lambda h, st, j, i, c: domain.save_job_record(st, j, _text(c.body, "notes"), c.actor, c.body, c.reply, gate_over=True)),
     # Edit on a saved job record (Nov 26): the same form, with the rows it saved (domain.update_job_record).
     "daily-record-edit": (True, lambda h, st, j, i, c: domain.update_job_record(st, j, i, _text(c.body, "notes"), c.actor, c.body, c.reply)),
     "attach": (True, lambda h, st, j, i, c: domain.add_packet_attachment(st, j, i, _text(c.body, "name"), c.actor, file_id=_text(c.body, "file_id"), read_file=_file_reader(c.company_id, c.read_ahead),

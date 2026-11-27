@@ -38,7 +38,12 @@ const ACTIONS = {
   retainage_wait: (r) => `data-action="open-job" data-id="${r.job_id}" data-focus=".task-card, .job-actions"`,
   // A change order still missing its price (decision 2): to the change order, where it is priced.
   co_info: (r) => `data-action="open-co" data-job="${r.job_id}" data-co="${r.co_id}"`,
+  // What the job records should have (Nov 26): New job record on that job, with the change order's work open.
+  no_record: (r) => `data-action="daily-for-job" data-id="${r.job_id}"`,
+  co_no_work: (r) => `data-action="daily-co-work" data-id="${r.job_id}" data-co="${r.co_id}"`,
 };
+// A reminder that can be put away for the day (domain.dismiss_row).
+const DISMISSABLE = ["no_record", "co_no_work"];
 const OPENS_JOB = ["ready", "waiver", "due_soon", "new_job", "closeout", "retainage", "finish", "finish_held", "retainage_wait"];
 
 // The server's rows (already HTML-escaped on arrival, like the rest of state), most urgent first.
@@ -63,9 +68,10 @@ export function rowButtons(r, perms) {
   const attrs = r.kind === "email_failed" && !mailReady ? null : r.kind === "says_done" && !mayTake("done", perms) ? null : ACTIONS[r.kind];
   const main = attrs && r.button ? `<button class="btn small" ${attrs(r)}>${r.button}</button>` + (r.kind === "inbox" ? inboxKindSelect(r) : "") : "";
   // Talked to them? A Conversation / note with client on New job record (Nov 26), for this job.
+  const dismiss = DISMISSABLE.includes(r.kind) ? `<button class="btn small secondary" data-action="dismiss-row" data-id="${r.job_id}" data-key="${r.key}">${r.kind === "no_record" ? "Dismiss for today" : "Dismiss"}</button>` : "";
   const talked = r.kind === "follow_up" ? `<button class="btn small secondary" data-action="daily-conversation" data-id="${r.job_id}">Note a conversation</button>` : "";
   const open = OPENS_JOB.includes(r.kind) ? "" : `<button class="btn small secondary" data-action="open-job" data-id="${r.job_id}">Open</button>`;
-  return main + talked + open;
+  return main + talked + dismiss + open;
 }
 
 // One To Do row's buttons: a row the jobs make keeps its own (rowButtons); a task added by hand

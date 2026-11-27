@@ -23,7 +23,7 @@ class FormTests(unittest.TestCase):
         self.rough = line(self.job, "1")
 
     def save(self, notes="", **body):
-        return domain.save_job_record(self.state, self.id, notes, "Ana", {"today": domain.local_today(), **body})
+        return domain.save_job_record(self.state, self.id, notes, "Ana", {"today": domain.local_today(), **body}, gate_over=True)
 
     def test_a_conversation_is_a_section_of_the_form(self):
         self.save("", entries=[{"section": "conversation", "row": 0, "text": "Owner wants the vanity moved 6 inches"}])

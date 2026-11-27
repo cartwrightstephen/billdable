@@ -57,7 +57,7 @@ test("each form opens on its job, empty but for what is obvious, and nothing is 
   await tap({ type: "form", form: "match", job_id: "j1", label: "Record a Payment: Oak Street kitchen" });
   assert.deepEqual([page.currentView, page.formOpen.match], ["job", true]);
   await tap({ type: "form", form: "progress", job_id: "j1", label: "Progress Pay App: Oak Street kitchen" });
-  assert.deepEqual([page.currentView, page.formOpen.progress], ["job", true]);
+  assert.deepEqual([page.currentView, page.currentJobId], ["payapp-new", "j1"], "its own page (Nov 26)");
   await tap({ type: "form", form: "daily", job_id: "j1", label: "New job record: Oak Street kitchen" });
   assert.equal(page.currentView, "daily");
   await tap({ type: "form", form: "newjob", client: "Northline GC", name: "Elm Street", label: "New job" });

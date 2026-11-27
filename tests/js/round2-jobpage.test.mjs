@@ -39,7 +39,7 @@ test("a new job: the four buttons in order, Record a Payment off until a pay app
   assert.deepEqual(mainOf(r), [["New Change Order", true], ["Progress Pay App", true], ["Final Pay App", true], ["Record a Payment", false]]);
   assert.deepEqual(r.tasks, []);
   const html = draw(job());
-  assert.match(html, /<div class="main-actions"><button class="btn main-action main-co" data-action="new-co">New Change Order<\/button><button class="btn main-action main-progress" data-action="toggle-form" data-form="progress">Progress Pay App<\/button><button class="btn main-action main-done" data-action="toggle-form" data-form="done">Final Pay App<\/button><button class="btn main-action main-match" disabled>Record a Payment<\/button><\/div>/);
+  assert.match(html, /<div class="main-actions"><button class="btn main-action main-co" data-action="new-co">New Change Order<\/button><button class="btn main-action main-progress" data-action="progress-open" data-id="j-1">Progress Pay App<\/button><button class="btn main-action main-done" data-action="toggle-form" data-form="done">Final Pay App<\/button><button class="btn main-action main-match" disabled>Record a Payment<\/button><\/div>/);
   assert.doesNotMatch(html, /task-card|Next step|next-card|action-group|<h3>Bill<\/h3>|Get paid|Close out/);
   assert.doesNotMatch(html, /Log a conversation/, "a conversation goes through New job record (Nov 26)");
 });

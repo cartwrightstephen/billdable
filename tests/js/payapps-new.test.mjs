@@ -70,9 +70,8 @@ test("Continue needs a job; a job in progress opens its Progress pay app form", 
   assert.equal(page.formOpen.progress, undefined, "nothing opens until a job is picked");
   dom.all['[data-form-key="papick"] [data-field]'] = [{ dataset: { field: "job" }, value: "jg" }];
   await reg.actions["payapp-new-open"]();
-  assert.equal(page.currentView, "job");
+  assert.equal(page.currentView, "payapp-new", "Progress pay app's own page (Nov 26)");
   assert.equal(page.currentJobId, "jg");
-  assert.equal(page.formOpen.progress, true, "the job page's own progress form");
   assert.equal(dom.requests.length, 0, "nothing drafted yet");
   delete dom.all['[data-form-key="papick"] [data-field]'];
   page.formOpen.progress = false;

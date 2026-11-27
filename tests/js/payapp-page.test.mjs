@@ -162,7 +162,9 @@ test("Approve & send asks first, naming who, how much and the period", async () 
   assert.equal(dom.requests.filter(r => r.path === "/api/jobs/j1/send").length, 0, "Cancel sends nothing");
   d = answerDialogs(true);
   try { await reg.actions.send({ dataset: { reviewed: "abc123" } }, "j1"); } finally { d.restore(); }
-  assert.deepEqual(dom.requests.find(r => r.path === "/api/jobs/j1/send").body, { reviewed: "abc123" }, "the review stamp still goes with it");
+  const sent = dom.requests.find(r => r.path === "/api/jobs/j1/send").body;
+  assert.equal(sent.reviewed, "abc123", "the review stamp still goes with it");
+  assert.match(sent.today, /^\d{4}-\d{2}-\d{2}$/, "the sender's own day, which the payment terms count from");
 });
 
 test("with something missing, Approve & send still asks first, then the server says why in place", async () => {
