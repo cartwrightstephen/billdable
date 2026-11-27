@@ -6,7 +6,9 @@ it says so on every page. Lien waiver forms are set by state law: the contractor
 supplies their own, or prints a state's form filled in by waiver_form.py.
 
 Written with the standard library only: a small PDF writer using the built-in
-Helvetica and Courier fonts (no embedding), landscape US Letter.
+Helvetica and Courier fonts (no embedding), portrait US Letter (Nov 26 walkthrough: "it should be
+vertical"). The continuation sheet fits the 540 pt between the margins in 7 pt Courier, its
+descriptions wrapped onto as many lines as they need.
 """
 
 from __future__ import annotations
@@ -18,8 +20,10 @@ from typing import Any
 
 import sov
 
-PAGE_W, PAGE_H = 792, 612
+PAGE_W, PAGE_H = 612, 792
 MARGIN = 36
+SHEET_SIZE = 7      # the continuation sheet's Courier size
+SHEET_LEAD = 9      # the gap between a wrapped description's lines
 LIVE = sov.LIVE_STATUSES
 
 
@@ -230,7 +234,7 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
         x = MARGIN + i * col
         p.text(x, y, label, "F2", 8)
         for k, line in enumerate([l for l in lines if l][:3]):
-            p.text(x, y - 13 * (k + 1), _fit(line, 42), "F1", 10)
+            p.text(x, y - 12 * (k + 1), _fit(line, 34), "F1", 9)
     y -= 70
     p.line(MARGIN, y, PAGE_W - MARGIN, y, 1)
     y -= 22
@@ -274,8 +278,8 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
                 break
             y -= 16
             who = ", ".join(x for x in [sig.get("name", ""), sig.get("title", "")] if x)
-            p.text(MARGIN + 20, y, _fit(f"/s/ {sig.get('signed_name') or sig.get('name', '')}", 40), "F2", 10)
-            p.text(MARGIN + 240, y, _fit(who, 44), "F1", 9.5)
+            p.text(MARGIN + 20, y, _fit(f"/s/ {sig.get('signed_name') or sig.get('name', '')}", 34), "F2", 10)
+            p.text(MARGIN + 220, y, _fit(who, 36), "F1", 9.5)
             p.right(MARGIN + 520, y, f"Date {str(sig.get('approved_at') or '')[:10]}", 9.5)
     pages.append(p)
 
@@ -286,7 +290,7 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
     def new_sheet_page(title: str) -> tuple[_Page, float]:
         page = _Page()
         page.text(MARGIN, header_y, title, "F2", 13)
-        page.right(PAGE_W - MARGIN, header_y, f"{invoice['number']} - {_fit(job.get('name', ''), 40)}", 9)
+        page.right(PAGE_W - MARGIN, header_y, f"{invoice['number']} - {_fit(job.get('name', ''), 30)}", 9)
         return page, header_y - 28
 
     def notes_on(page: _Page, y: float) -> tuple[_Page, float]:
@@ -294,7 +298,7 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
         notes = str(invoice.get("progress_notes") or "").strip()
         if not notes:
             return page, y
-        wrapped = [w for para in notes.splitlines() for w in (textwrap.wrap(para, 120) or [""])]
+        wrapped = [w for para in notes.splitlines() for w in (textwrap.wrap(para, 100) or [""])]
         y -= 10
         if y < 90:
             pages.append(page)
@@ -313,40 +317,54 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
     if sheet:
         # G703 columns: C scheduled, D previous work, E work this period, F materials stored,
         # the quantity completed to date (Stephen's Oct 29 review, M2), G completed and stored to
-        # date, G/C, H balance, I retainage at the job's percent. 141 Courier characters at 8 pt
-        # fit the 720 pt between the margins.
-        widths = [5, 20, 13, 13, 13, 12, 12, 13, 4, 13, 12]
+        # date, G/C, H balance, I retainage at the job's percent. 127 Courier characters at 7 pt
+        # fit the 540 pt between a portrait page's margins; a description longer than its column
+        # goes on to the lines below, so nothing is cut short.
+        widths = [5, 15, 12, 12, 12, 11, 11, 12, 4, 12, 11]
         heads = ["Item", "Description", "Scheduled", "Previous", "This period", "Stored", "Qty to date", "To date", "%", "Balance", "Retainage"]
         pct_ret = int(invoice.get("retainage_pct", job.get("retainage_pct")) or 0)   # as held on this pay app (R4-07)
-        size = 8
+        size = SHEET_SIZE
 
         def row_text(cells: list[str]) -> str:
             out = []
             for i, (cell, w) in enumerate(zip(cells, widths)):
                 out.append(cell.ljust(w) if i < 2 else cell.rjust(w))
-            return " ".join(out)
+            return " ".join(out).rstrip()
+
+        def wrapped(text: str) -> list[str]:
+            return textwrap.wrap(" ".join(str(text).split()), widths[1], break_long_words=True) or [""]
 
         page, y = new_sheet_page("CONTINUATION SHEET")
         page.text(MARGIN, y, row_text(heads), "F3", size)
         page.line(MARGIN, y - 4, PAGE_W - MARGIN, y - 4)
-        y -= 16
-        totals = [0, 0, 0, 0, 0, 0]  # scheduled, previous, this period, stored, to date, retainage
-        for e in sheet:
-            if y < 70:
+        y -= 14
+
+        def put(cells: list[str], description: str) -> None:
+            """One row of the sheet: the figures beside the description's first line, the rest of
+            the description under it. A row never splits across pages."""
+            nonlocal page, y
+            desc = wrapped(description)
+            if y - SHEET_LEAD * (len(desc) - 1) < 70:
                 pages.append(page)
                 page, y = new_sheet_page("CONTINUATION SHEET (continued)")
                 page.text(MARGIN, y, row_text(heads), "F3", size)
-                y -= 16
+                page.line(MARGIN, y - 4, PAGE_W - MARGIN, y - 4)
+                y -= 14
+            page.text(MARGIN, y, row_text([cells[0], desc[0], *cells[1:]]), "F3", size)
+            for more in desc[1:]:
+                y -= SHEET_LEAD
+                page.text(MARGIN, y, row_text(["", more]), "F3", size)
+            y -= 12
+
+        totals = [0, 0, 0, 0, 0, 0]  # scheduled, previous, this period, stored, to date, retainage
+        for e in sheet:
             c = sov.sheet_columns(e, pct_ret)
-            page.text(MARGIN, y, row_text([
-                _fit(e.get("item", ""), 5), _fit(e["description"], 20),
-                *(f"{c[k] / 100:,.2f}" for k in ("scheduled", "previous", "this_period", "stored")),
-                _fit(sov.qty_to_date(e), 12), f"{c['to_date'] / 100:,.2f}",
-                f"{c['pct']}%", f"{c['balance'] / 100:,.2f}", f"{c['retainage'] / 100:,.2f}",
-            ]), "F3", size)
+            put([_fit(e.get("item", ""), widths[0]),
+                 *(f"{c[k] / 100:,.2f}" for k in ("scheduled", "previous", "this_period", "stored")),
+                 _fit(sov.qty_to_date(e), widths[6]), f"{c['to_date'] / 100:,.2f}",
+                 f"{c['pct']}%", f"{c['balance'] / 100:,.2f}", f"{c['retainage'] / 100:,.2f}"], e["description"])
             for i, k in enumerate(("scheduled", "previous", "this_period", "stored", "to_date", "retainage")):
                 totals[i] += c[k]
-            y -= 13
         terms = terms_for(job, invoice)
         bp = terms["op_bp"]
         if bp:
@@ -358,13 +376,11 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
             op_sched = terms["op_scheduled_cents"]
             op_to = op_prev + op_this
             op_ret = sov.retainage_on(op_to, pct_ret)
-            page.text(MARGIN, y, row_text(["", _fit(f"Overhead and profit {bp / 100:g}%", 20), f"{op_sched / 100:,.2f}", f"{op_prev / 100:,.2f}",
-                                           f"{op_this / 100:,.2f}", "0.00", "", f"{op_to / 100:,.2f}",
-                                           f"{(100 * op_to) // op_sched if op_sched else 0}%", f"{(op_sched - op_to) / 100:,.2f}",
-                                           f"{op_ret / 100:,.2f}"]), "F3", size)
+            put(["", f"{op_sched / 100:,.2f}", f"{op_prev / 100:,.2f}", f"{op_this / 100:,.2f}", "0.00", "", f"{op_to / 100:,.2f}",
+                 f"{(100 * op_to) // op_sched if op_sched else 0}%", f"{(op_sched - op_to) / 100:,.2f}", f"{op_ret / 100:,.2f}"],
+                f"Overhead and profit {bp / 100:g}%")
             for i, v in enumerate((op_sched, op_prev, op_this, 0, op_to, op_ret)):
                 totals[i] += v
-            y -= 13
         # Change orders billed while unsigned have no line on this sheet: each gets its own row, so
         # the totals match line 4 (which counts them). One still unsigned as of this pay app says so.
         unsigned = {co["id"] for co in terms["pending_cos"]}
@@ -372,17 +388,16 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
             sched, prev, this, to = row["scheduled_cents"], row["previous_cents"], row["this_cents"], row["to_date_cents"]
             ret = sov.retainage_on(to, pct_ret)
             name = f"CO {row['number']} (unsigned)" if row["co_id"] in unsigned else f"CO {row['number']}"
-            page.text(MARGIN, y, row_text(["", _fit(name, 20), f"{sched / 100:,.2f}", f"{prev / 100:,.2f}",
-                                           f"{this / 100:,.2f}", "0.00", "", f"{to / 100:,.2f}",
-                                           f"{(100 * to) // sched if sched else 0}%", f"{(sched - to) / 100:,.2f}", f"{ret / 100:,.2f}"]), "F3", size)
+            put(["", f"{sched / 100:,.2f}", f"{prev / 100:,.2f}", f"{this / 100:,.2f}", "0.00", "", f"{to / 100:,.2f}",
+                 f"{(100 * to) // sched if sched else 0}%", f"{(sched - to) / 100:,.2f}", f"{ret / 100:,.2f}"], name)
             for i, v in enumerate((sched, prev, this, 0, to, ret)):
                 totals[i] += v
-            y -= 13
         page.line(MARGIN, y + 8, PAGE_W - MARGIN, y + 8)
         page.text(MARGIN, y - 4, row_text(["", "Totals", *(f"{t / 100:,.2f}" for t in totals[:4]), "", f"{totals[4] / 100:,.2f}", "",
                                            f"{(totals[0] - totals[4]) / 100:,.2f}", f"{totals[5] / 100:,.2f}"]), "F3", size)
         if pct_ret:
-            page.text(MARGIN, y - 18, f"Retainage column: {pct_ret}% of the total to date on each line, for reference. Line 5 on page 1 is the retainage actually held to date.", "F1", 8)
+            page.text(MARGIN, y - 18, f"Retainage column: {pct_ret}% of the total to date on each line, for reference.", "F1", 8)
+            page.text(MARGIN, y - 28, "Line 5 on page 1 is the retainage actually held to date.", "F1", 8)
         page, y = notes_on(page, y - 30)
         pages.append(page)
     else:
@@ -391,7 +406,7 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
             if y < 70:
                 pages.append(page)
                 page, y = new_sheet_page("PAY APP LINES (continued)")
-            page.text(MARGIN, y, _fit(line["label"], 100), "F1", 10)
+            page.text(MARGIN, y, _fit(line["label"], 80), "F1", 10)
             page.right(PAGE_W - MARGIN, y, _money(line["amount_cents"]), 10)
             y -= 16
         page.line(MARGIN, y + 8, PAGE_W - MARGIN, y + 8)
@@ -406,7 +421,7 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
         page, y = new_sheet_page("SUPPORTING DOCUMENTS")
         for item in packet:
             mark = "Not attached: " if item.get("override") else "[x] " if item.get("present") and not sov.name_only_open(job, invoice, item) else "[  ] "
-            page.text(MARGIN, y, mark + _fit(item["label"], 110), "F1", 10)
+            page.text(MARGIN, y, mark + _fit(item["label"], 90), "F1", 10)
             y -= 15
             if y < 60:
                 break

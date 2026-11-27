@@ -168,7 +168,8 @@ class ApprovingIsSigning(unittest.TestCase):
 
     def test_many_signatures_stay_on_the_first_page(self):
         state, job, inv = ready_state()
-        people = {f"u-{n}": f"Approver {n}" for n in range(12)}
+        # The page is portrait (Nov 26 walkthrough): more fit than in landscape, so more sign.
+        people = {f"u-{n}": f"Approver {n}" for n in range(30)}
         domain.set_payapp_approvers(state, list(people), people)
         for uid, name in people.items():
             sign(state, job, {"id": uid, "name": name})
