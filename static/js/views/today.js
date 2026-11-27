@@ -307,6 +307,35 @@ function resultsHtml() {
     </details>`;
 }
 
+// Money owed (Siteline comparison, item 6): every pay app out for payment, soonest expected
+// first, with when to expect it and why that day (domain/paydate.py), and those past it flagged.
+export function owedRows(jobs) {
+  const rows = [];
+  for (const j of jobs || []) {
+    if (j.closed) continue;
+    for (const i of j.invoices || []) if (i.predicted_pay) rows.push({ j, i, p: i.predicted_pay });
+  }
+  return rows.sort((a, b) => (a.p.on < b.p.on ? -1 : a.p.on > b.p.on ? 1 : 0));
+}
+
+function owedCardHtml() {
+  const rows = owedRows(state.jobs);
+  if (!rows.length) return "";
+  const late = rows.filter(r => r.p.overdue_days > 0).length;
+  return `<div class="card dash-owed" id="money-owed"><h2>Money owed</h2>
+    <p class="sub">Soonest expected first${late ? ` · <span class="pill amber">${late} past expected</span>` : ""}</p>
+    <div class="table-wrap"><table class="dash-owed-table">
+      <tr><th>${termText("Pay app")}</th><th>Job</th><th>Owed</th><th>Expected</th></tr>
+      ${rows.map(({ j, i, p }) => `<tr${p.overdue_days ? ' class="owed-late"' : ""}>
+        <td><a href="${pathFor("payapp-detail", j.id, i.id)}" data-action="open-payapp" data-job="${j.id}" data-inv="${i.id}">${i.number}</a></td>
+        <td><a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a></td>
+        <td class="num">${money(i.remaining_cents ?? i.amount_cents)}</td>
+        <td>${fmtDate(p.on)}${p.overdue_days ? ` <span class="pill amber">${p.overdue_days} day${p.overdue_days === 1 ? "" : "s"} past expected</span>` : ""}<div class="sub row-sub">${termText(p.text.replace(/^Expected (about )?[^·]*· /, ""))}</div></td>
+      </tr>`).join("")}
+    </table></div>
+  </div>`;
+}
+
 // This module's pages, by the name their address opens (routes.js).
 export const views = {
   dashboard() {
@@ -333,6 +362,7 @@ export const views = {
         <div class="metric"><div class="k">Held back, still owed</div><div class="v">${money(t.retainage_cents)}</div></div>
         <div class="metric"><div class="k">Billed this month</div><div class="v">${money(billedThisMonth(state.jobs))}</div></div>
       </div>
+      ${owedCardHtml()}
       ${resultsHtml()}
       <p class="sub">${open.length} active job${open.length === 1 ? "" : "s"}${t.blocked_jobs ? ` · ${t.blocked_jobs} can't be sent yet` : ""}</p>
       ${state.jobs.length ? `

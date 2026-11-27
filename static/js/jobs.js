@@ -461,7 +461,7 @@ export const ACTION_PERM = {
   send: "send_payapps", "waiver-answer": "send_payapps", waiver: "send_waivers", "waiver-not-needed": "send_waivers", retainage: "ask_retainage",
   "match-payment": "record_payments", "retainage-paid": "record_payments", "retainage-credit": "record_payments",
   "overbilling-settled": "record_payments",
-  "accept-short-pay": "void", "void-draft": "void", "void-sent": "void", delete: "void",
+  "accept-short-pay": "void", "void-draft": "void", "void-sent": "void", revise: "void", delete: "void",
   close: "close_jobs", reopen: "close_jobs",
   done: "manage_jobs", "undo-done": "manage_jobs", edit: "manage_jobs", "approve-co": "manage_jobs", "withdraw-co": "manage_jobs", "include-co": "manage_jobs",
   "co-price": "manage_jobs", "payapp-approve": "approve_payapps",

@@ -46,6 +46,7 @@ import helper
 import importer
 import job_archive
 import legal
+import delivery
 import mail_events
 import mailer
 import metrics
@@ -278,7 +279,7 @@ SECRET_PATHS = (
     (re.compile(r"(/api/inbound/(?:email|sms)/)[^/?\s]+"), r"\1[token]"),
     (re.compile(r"(/api/calendar/)[^/?\s]+?(\.ics)"), r"\1[token]\2"),
     (re.compile(r"(/api/mail-events/)[^/?\s]+"), r"\1[token]"),
-    (re.compile(r"(/[ps]/[a-z0-9-]+\.)[A-Za-z0-9_-]+"), r"\1[token]"),
+    (re.compile(r"(/[pso]/[a-z0-9-]+\.)[A-Za-z0-9_-]+"), r"\1[token]"),
 )
 
 
@@ -2060,6 +2061,24 @@ class Handler(BaseHTTPRequestHandler):
     def _p_outbox_retry(self, m, ctx: "Ctx") -> None:
         self._json(*outbox.retry_email(SITE, ctx.company_id, ctx.user, m.group(1), self._rid))
 
+    def _p_outbox_resend(self, m, ctx: "Ctx") -> None:
+        """Send to this recipient again (Siteline comparison, item 5): one address of an email."""
+        self._json(*outbox.resend_to(SITE, ctx.company_id, ctx.user, m.group(1), _text(ctx.body, "email", limit=254), ctx.actor, self._rid))
+
+    def _g_open_pixel(self, m) -> None:
+        """The open-tracking image (delivery.py), only in emails of a company that turned it on.
+        It always answers with the same image, so it says nothing to whoever asks."""
+        company_id, token = m.group(1), m.group(2)
+        if company_id not in deleted_companies() and company_exists(company_id):
+            with company_lock(company_id):
+                state = load_company(company_id)
+                entry, row = delivery.find_token(state, token)
+                # Turned off since it went: nothing more is recorded.
+                if entry and state.get("company", {}).get("open_tracking") is True \
+                        and delivery.mark(entry, row["email"], "opened", datetime.now(timezone.utc).isoformat(timespec="seconds")):
+                    save_company(company_id, state)
+        self._send(200, delivery.PIXEL, "image/gif", {"Cache-Control": "no-store, private", "X-Robots-Tag": "noindex"})
+
     def _p_rotate(self, m, ctx: "Ctx") -> None:
         kind = _text(ctx.body, "kind")
         if kind not in {"email", "sms", "calendar"}:
@@ -2513,28 +2532,33 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, RecursionError):
             raise BadRequest("Send JSON.")
         failures = mail_events.normalize(body)
+        # Delivered and opened, per address (Siteline comparison, item 5; mail_events.py).
+        events = [("bounce", f) for f in failures] + [("status", f) for f in mail_events.normalize_status(body)]
         marked = 0
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        if failures:
+        if events:
             # The provider doesn't know our companies: each event goes to the one company whose
             # email it is about (its Message-ID, or else the newest delivered email it matches).
             best: dict[int, tuple[str, str]] = {}
             for company_id in company_ids():
                 with company_lock(company_id):
                     state = load_company(company_id)
-                for i, f in enumerate(failures):
-                    entry = mail_events.find(state, f["email"], f["message_id"], f["subject"], f.get("at", ""))
+                for i, (kind, f) in enumerate(events):
+                    entry = ((kind == "bounce" and mail_events.find(state, f["email"], f["message_id"], f["subject"], f.get("at", "")))
+                             or mail_events.find_any(state, f["email"], f["message_id"], f["subject"], f.get("at", "")))
                     if entry and (i not in best or mail_events.when_delivered(entry) > best[i][0]):
                         best[i] = (mail_events.when_delivered(entry), company_id)
             for company_id in dict.fromkeys(c for _, c in best.values()):
                 with company_lock(company_id):
                     state = load_company(company_id)
-                    hit = [f for i, f in enumerate(failures) if best.get(i, ("", ""))[1] == company_id
-                           and mail_events.apply(state, f["email"], f["reason"], now, f["message_id"], f["subject"], f.get("at", ""))]
+                    hit = [f for i, (kind, f) in enumerate(events) if best.get(i, ("", ""))[1] == company_id
+                           and (mail_events.apply(state, f["email"], f["reason"], now, f["message_id"], f["subject"], f.get("at", ""))
+                                if kind == "bounce" else
+                                mail_events.record_status(state, f["email"], f["status"], f.get("at") or now, f["message_id"], f["subject"], f.get("at", "")))]
                     if hit:
                         save_company(company_id, state)
                         marked += len(hit)
-        log_json("info", msg="mail events", received=len(failures), marked=marked, rid=self._rid)
+        log_json("info", msg="mail events", received=len(events), marked=marked, rid=self._rid)
         self._json(200, {"ok": True, "marked": marked})
 
     def _serve_file(self, company_id: str, state: dict, file_id: str) -> None:
@@ -3153,6 +3177,7 @@ ROUTES = [
     Route("GET", r"/api/calendar/([^/]+?)\.ics", "_g_calendar"),
     Route("GET", r"/p/" + TOKEN_LINK + r"(/pdf|/file/[A-Za-z0-9_-]{1,64})?", "_g_payer_page"),
     Route("GET", r"/s/" + TOKEN_LINK, "_g_co_sign"),
+    Route("GET", r"/o/" + TOKEN_LINK + r"\.gif", "_g_open_pixel"),
     # signed-in reads
     Route("GET", r"/api/auth/me", "_g_me"),
     Route("GET", r"/api/auth/demo-available", "_g_demo_available"),
@@ -3223,6 +3248,7 @@ ROUTES = [
     Route("POST", r"/api/account/delete", "_p_account_delete", "body"),   # the Company Admin only (S8)
     Route("POST", r"/api/sov/parse", "_p_sov_parse", "body"),
     Route("POST", r"/api/outbox/([^/]+)/retry", "_p_outbox_retry", "body"),
+    Route("POST", r"/api/outbox/([^/]+)/resend", "_p_outbox_resend", "body"),
     Route("POST", r"/api/share/claim", "_p_share_claim", "body"),
     # changes to the company's state
     Route("POST", r"/api/reset", "_m_reset", "mutate", perm="data"),
@@ -3319,6 +3345,19 @@ def _confirmed(c: Ctx, what: str = "the pay app") -> None:
     tap that would send is refused with the reason, before anything changes (R1-07)."""
     if c.company_id != auth.DEMO_COMPANY_ID and mailer.configured() and not c.user.get("email_verified"):
         raise domain.GateError(f"Confirm your email first so {what} goes out from you. Open the link we emailed you, or send it again.")
+
+
+def _revise(state: dict, job_id: str, invoice_id: str, ctx: "Ctx") -> None:
+    """Revise a sent pay app: its PDF as the client got it is saved first, as a file of the company."""
+    def save_pdf(job: dict, invoice: dict) -> str:
+        pdf, _ = payapp_pdf.for_invoice(state, job["id"], invoice["id"])
+        if not pdf:
+            return ""
+        name = f"{invoice['number']} as sent {str(invoice.get('sent_at') or '')[:10]}.pdf"
+        meta = importer.save_file(state, ctx.company_id, name, pdf, ctx.actor)
+        meta["revision_of"] = invoice["id"]
+        return meta["id"]
+    domain.revise_sent_pay_app(state, job_id, invoice_id, _text(ctx.body, "reason"), ctx.actor, save_pdf=save_pdf)
 
 
 def _sends(what: str, run):
@@ -3640,6 +3679,8 @@ JOB_ACTIONS = {
     "undo-done": (False, lambda h, st, j, i, c: domain.undo_mark_done(st, j, c.actor)),
     "accept-short-pay": (True, lambda h, st, j, i, c: domain.settle_short_pay(st, j, i, _text(c.body, "reason"), c.actor)),
     "void-sent": (True, _sends("the email", lambda h, st, j, i, c: domain.void_sent_pay_app(st, j, i, _text(c.body, "reason"), c.actor))),
+    # Back to a draft to correct it, keeping what went as a revision (domain/revise.py).
+    "revise": (True, lambda h, st, j, i, c: _revise(st, j, i, c)),
     "edit": (False, _edit_job),
     "paperwork": (False, lambda h, st, j, i, c: domain.set_job_paperwork(st, j, c.body, c.actor)),
     "delete": (False, lambda h, st, j, i, c: domain.delete_job(st, j, c.actor)),

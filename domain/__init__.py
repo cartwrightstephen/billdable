@@ -20,6 +20,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+import delivery
 import doc_check
 import payapp_pdf
 import sov
@@ -703,6 +704,8 @@ def draft_invoice(
     if replaces:
         invoice["replaces"] = replaces["id"]
         _carry_send_choices(state, job, replaces, invoice)
+        if replaces.get("revisions"):   # a pay app back to a draft for revision keeps what went (domain/revise.py)
+            invoice["revisions"], invoice["revised_at"] = deepcopy(replaces["revisions"]), replaces.get("revised_at")
     job.pop("sov_replaced_draft", None)
     if period and period.get("kept"):
         invoice["sov_overrides"] = period["kept"]
@@ -2713,6 +2716,9 @@ def job_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     # Money > Unpaid's Recent contact (M11), only on jobs with money owed, to keep the page light.
     if out["money"]["outstanding_cents"] > 0:
         out["recent_contact"], out["contact_total"] = contact_log(state, job["id"])
+    # When each open pay app should be paid, and what became of its emails (domain/paydate.py, delivery.py).
+    add_pay_predictions(state, job, out)
+    add_invoice_emails(state, job, out)
     return out
 
 
@@ -2943,6 +2949,7 @@ def mark_moot(state: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[st
     instead of a Send again that would be refused (outbox.retry_email)."""
     jobs = {j["id"]: j for j in state.get("jobs", [])}
     for r in rows:
+        delivery.public(r)   # the tracking image's keys stay on the server
         status = str(r.get("status") or "")
         job = jobs.get(r.get("job_id"))
         if job and (status.startswith("failed") or status.startswith("not sent") or status in {"sending", "queued"}):
@@ -2950,6 +2957,11 @@ def mark_moot(state: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[st
             reason = email_moot(job, {**r, "kind": r.get("email_kind") or r.get("kind"), "subject": r.get("subject") or r.get("text")})
             if reason:
                 r["moot"] = reason
+        elif job and (status == "sent" or status.startswith("bounced")):
+            # Resend to this recipient (outbox.resend_to) refuses these the same way; the page hides it.
+            reason = email_moot(job, {**r, "kind": r.get("email_kind") or r.get("kind"), "subject": r.get("subject") or r.get("text")})
+            if reason:
+                r["resend_moot"] = reason
     return rows
 
 
@@ -2963,6 +2975,8 @@ def email_moot(job: dict[str, Any], e: dict[str, Any]) -> str:
         if inv.get("replaced"):
             return f"{number} was replaced."
         return f"{number} was pulled back." if inv.get("sent_at") else f"The draft {number} was deleted."
+    if e.get("kind") == "pay_app" and inv and inv.get("revised_at") and inv.get("status") in DRAFT_STATUSES:
+        return f"{inv.get('number', 'That pay app')} is back to a draft for revision."
     # Once the money is in, a pay app or follow-up that didn't go out no longer matters.
     if e.get("kind") == "pay_app" and inv and inv.get("status") == "paid":
         return f"{inv.get('number', 'That pay app')} is paid."
@@ -2988,6 +3002,8 @@ def light_snapshot(state: dict[str, Any], now: datetime | None = None, perms: li
     out = {k: deepcopy(v) for k, v in state.items() if k not in heavy}
     full, jobs = [], []
     closed_count, closed_collected = 0, 0
+    # Each client's days to paid (domain/paydate.py), for the Client playbook.
+    pay_stats = client_stats(state)
     for job in state["jobs"]:
         if job.get("closed"):
             closed_count += 1
@@ -3013,6 +3029,8 @@ def light_snapshot(state: dict[str, Any], now: datetime | None = None, perms: li
         timing = timings.get(payer["id"])
         if timing:
             payer["paid_days_avg"], payer["paid_count"] = timing
+        if payer["id"] in pay_stats:
+            payer["pay_stats"] = pay_stats[payer["id"]]
         payer_extras(state, payer)   # its client type and paperwork items (S11)
         due = payapp_due(payer, (now or datetime.now(timezone.utc)).date())
         if due:
@@ -3026,7 +3044,7 @@ def light_snapshot(state: dict[str, Any], now: datetime | None = None, perms: li
     out["email_log_total"] = len(emails)
     # Today lists these with Send again, however old they are; the count is for the Today badge.
     failures = email_failures(state)
-    out["email_failures"] = [{k: v for k, v in e.items() if k != "body"} for e in failures[:RECENT_EMAILS]]
+    out["email_failures"] = [delivery.public({k: v for k, v in e.items() if k != "body"}) for e in failures[:RECENT_EMAILS]]
     out["pending_email_failures"] = len(failures)
     out["audit_total"] = len(state.get("audit", []))
     # Today's queue, drawn from the same rows as the daily email (R4-10).
@@ -3041,6 +3059,24 @@ def light_snapshot(state: dict[str, Any], now: datetime | None = None, perms: li
     out["trial"] = trial.status(state)
     out["totals"] = {**_totals(full), "closed_collected_cents": closed_collected}
     return out
+
+
+def add_invoice_emails(state: dict[str, Any], job: dict[str, Any], view: dict[str, Any]) -> None:
+    """Each pay app's emails, newest first, with what became of each at every address
+    (delivery.py), for its page: the pay app itself, its waivers and retainage request, and
+    follow-ups that name it. Bodies left out."""
+    emails = [e for e in state.get("email_log", []) if e.get("job_id") == job["id"]]
+    if not emails:
+        return
+    keep = ("id", "job_id", "payapp_invoice_id", "invoice_id", "kind", "at", "to", "cc", "status", "delivered_at", "failed_at", "bounced_at", "refused", "recipients",
+            "subject", "resend_of", "sample", "sending_at")
+    for inv in view.get("invoices", []):
+        number = f"{inv.get('number', '')}"
+        mine = [e for e in emails if inv.get("id") and (e.get("payapp_invoice_id") == inv["id"] or e.get("invoice_id") == inv["id"]
+                                                         or (e.get("kind") == "follow_up" and number and f"{number} " in f"{e.get('subject', '')} "
+                                                             .replace(",", " ").replace(":", " ")))]
+        if mine:
+            inv["emails"] = mark_moot(state, [delivery.public({k: deepcopy(e[k]) for k in keep if k in e}) for e in reversed(mine[-10:])])
 
 
 def rows_with_perms(rows: list[dict[str, Any]], perms: list[str] | None) -> list[dict[str, Any]]:
@@ -3904,8 +3940,10 @@ COMPANY_RULES = {"name": "name", "phone": "phone", "license": "licence", "street
 BILLING_STYLES = {"pay_apps", "draws"}
 # On/off company settings on Settings, Company, with their default: owners get the daily "due
 # today" email (R4-10). Who may send is a permission now (S6, domain/profiles.py), not a switch.
-COMPANY_SWITCHES = {"daily_email": True}
-SWITCH_WORDS = {"daily_email": "daily email of what's due"}
+COMPANY_SWITCHES = {"daily_email": True, "open_tracking": False}
+# Open tracking (delivery.py) is off unless an owner turns it on: it tells us when a client's
+# mail program loaded an image, which they didn't ask to share.
+SWITCH_WORDS = {"daily_email": "daily email of what's due", "open_tracking": "track when emails are opened"}
 
 
 def payer_timing(state: dict[str, Any]) -> dict[str, tuple[float, int]]:
@@ -7255,3 +7293,5 @@ from .contact import *  # noqa: E402,F401,F403
 from .jobinfo import *  # noqa: E402,F401,F403
 from .jobrules import *  # noqa: E402,F401,F403
 from .gawaivers import *  # noqa: E402,F401,F403
+from .paydate import *  # noqa: E402,F401,F403
+from .revise import *  # noqa: E402,F401,F403
