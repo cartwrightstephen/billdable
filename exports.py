@@ -10,7 +10,11 @@ from __future__ import annotations
 
 import csv
 import io
-from typing import Any
+import json
+import re
+import zipfile
+from pathlib import Path
+from typing import Any, BinaryIO, Callable
 
 import domain
 from domain.jobinfo import job_started_on
@@ -140,3 +144,34 @@ def csv_text(state: dict[str, Any], kind: str) -> str:
     out = io.StringIO()
     csv.writer(out, lineterminator="\r\n").writerows(BUILDERS[kind](state))
     return "﻿" + out.getvalue()
+
+
+# ---------- everything, with the uploaded files (security review L4) ----------
+
+def _file_name(meta: dict[str, Any]) -> str:
+    name = re.sub(r"[^A-Za-z0-9._ ()-]+", "_", str(meta.get("name") or "file")).strip(" .")[:100] or "file"
+    return f"files/{meta.get('id', 'file')}-{name}"
+
+
+def write_company_archive(state: dict[str, Any], path_of: Callable[[dict[str, Any]], Path], out: BinaryIO) -> dict[str, int]:
+    """A zip of the company's export (company.json, as GET /api/export gives it) and every file
+    it holds, under files/<file id>-<name>; company.json's "files" list names each one. Files
+    are stored as they are (photos and PDFs are compressed already), read one at a time, so a
+    large company never sits in memory. A file missing on disk is listed in missing-files.txt.
+    Returns {"files", "missing"}."""
+    missing: list[str] = []
+    count = 0
+    with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
+        zf.writestr(zipfile.ZipInfo("company.json"), json.dumps(domain.without_link_secrets(state), indent=2),
+                    compress_type=zipfile.ZIP_DEFLATED)
+        for meta in state.get("files", []):
+            source = path_of(meta)
+            if not source.is_file():
+                missing.append(f"{meta.get('id')}  {meta.get('name')}")
+                continue
+            zf.write(source, _file_name(meta))
+            count += 1
+        if missing:
+            zf.writestr("missing-files.txt", "These files are listed in company.json but were not found on the server:\n" + "\n".join(missing) + "\n")
+    return {"files": count, "missing": len(missing)}
+

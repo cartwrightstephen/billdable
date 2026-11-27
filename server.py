@@ -1620,6 +1620,37 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, json.dumps(domain.without_link_secrets(state), indent=2).encode(), "application/json",
                    {"Content-Disposition": f'attachment; filename="duracash-export-{stamp}.json"'})
 
+    def _g_export_files(self, m, user) -> None:
+        """Everything with the uploaded files (L4): a zip of the export and each file. Built in a
+        temporary file and sent in pieces, so a company with gigabytes of photos never sits in memory."""
+        with company_lock(user["company_id"]):
+            state = load_company(user["company_id"])
+        if not has_perm(user, "data", state):
+            self._json(403, {"error": "Your permissions don't cover exporting the company's data."})
+            return
+        if not _within_limit(f"export-files:{user['company_id']}", 6, 3600):
+            self._json(429, {"error": "The export with files was made several times this hour. Try again later."})
+            return
+        import tempfile
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+        with tempfile.TemporaryFile() as tmp:
+            exports.write_company_archive(state, lambda meta: importer.file_path(user["company_id"], meta), tmp)
+            size = tmp.tell()
+            tmp.seek(0)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Length", str(size))
+            self.send_header("Content-Disposition", f'attachment; filename="duracash-export-with-files-{stamp}.zip"')
+            self.send_header("Cache-Control", "no-store")
+            for k, v in SECURITY_HEADERS.items():
+                self.send_header(k, v)
+            if os.environ.get("COOKIE_SECURE") == "1":
+                self.send_header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+            if self._rid:
+                self.send_header("X-Request-Id", self._rid)
+            self.end_headers()
+            shutil.copyfileobj(tmp, self.wfile, 256 * 1024)
+
     def _g_export_csv(self, m, user) -> None:
         """Jobs, pay apps, payments or change orders as a CSV file, finished jobs' too (I1). Open to
         everyone signed in, like Sent pay apps and each pay app's QuickBooks file: the same figures
@@ -3409,6 +3440,7 @@ ROUTES = [
     Route("GET", r"/api/(outbox|audit)", "_g_log_page", "user"),
     Route("GET", r"/api/timeline", "_g_timeline", "user"),
     Route("GET", r"/api/export", "_g_export", "user"),
+    Route("GET", r"/api/export/with-files\.zip", "_g_export_files", "user"),
     Route("GET", r"/api/team", "_g_team", "user"),
     Route("GET", r"/api/metrics", "_g_metrics", "user"),
     Route("GET", r"/api/financials\.csv", "_g_financials_csv", "user", perm="financials"),
