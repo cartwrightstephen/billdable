@@ -944,3 +944,12 @@ fieldset.co-items legend, fieldset.co-backup legend { color: var(--muted); font-
 .metrics.fin-tiles { grid-template-columns: repeat(4, 1fr); }
 @media (max-width: 1000px) { .metrics.fin-tiles { grid-template-columns: 1fr 1fr; } }
 #fin-report th.num, #fin-report td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Jobs, Compliance (compliance stream): documents, what clients need, lien deadlines. */
+.compliance-table td { vertical-align: top; }
+.compliance-upload, .compliance-done { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
+.compliance-upload input[type="file"] { max-width: 100%; }
+.compliance-add, .compliance-job { margin-top: 12px; }
+.compliance-job > summary, .compliance-add > summary { cursor: pointer; }
+.notice.compliance-legal { margin: 0 0 12px; }
+.notice.compliance-warning { margin: 10px 0; }

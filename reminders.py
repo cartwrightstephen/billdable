@@ -25,7 +25,11 @@ The kinds:
   supporting documents or a signature;
 - co_records: a job record in the last 30 days with change order work whose change order lacks
   what it needs (not signed; time and materials with no hours or backup), or with work no change
-  order covers yet.
+  order covers yet;
+- compliance: a company document expiring within its reminder days (30, 14 and 3 unless changed)
+  or expired, a client's required document with nothing current on file, and a lien deadline
+  coming up on an open job (compliance.reminder_items). In the app from the start for everyone
+  (KIND_DEFAULTS), since it came after people had saved their choices.
 Who gets what follows the daily email: what is assigned to you and, for an owner, what nobody has.
 """
 
@@ -45,6 +49,7 @@ import alerts
 import auth
 import billing
 import calendar_feed
+import compliance
 import domain
 import mailer
 import sms
@@ -55,7 +60,12 @@ KINDS = {
     "dates": ("Important dates", "Pay app cutoffs, payment dates and follow-ups in the next 7 days."),
     "missing": ("Missing information", "A client with no email or phone, and pay apps held up by what they need."),
     "co_records": ("Change order work", "A job record about a change order that doesn't have what it needs."),
+    "compliance": ("Compliance and lien dates", "Insurance certificates, licenses and other documents before they expire, "
+                   "what a client needs on file, and lien deadlines coming up (Jobs, Compliance)."),
 }
+# A kind added after people saved their choices starts in the app for them, as it would for
+# someone new; once they save a choice for it, theirs stands (compliance.py).
+KIND_DEFAULTS = {"compliance": ["app"]}
 CHANNELS = {"app": "In the app", "email": "Email", "text": "Text"}
 DATE_DAYS = 7
 CO_RECORD_DAYS = 30
@@ -183,7 +193,8 @@ def build(state: dict[str, Any], now: datetime) -> list[dict[str, Any]]:
     """Everything worth a reminder today, for the whole company."""
     jobs = {j["id"]: j for j in state.get("jobs", []) if not j.get("closed")}
     return (_safely("dates", _date_items, state, now.date(), jobs) + _safely("missing", _missing_items, state, jobs)
-            + _safely("co_records", _co_items, state, now, jobs))
+            + _safely("co_records", _co_items, state, now, jobs)
+            + _safely("compliance", compliance.reminder_items, state, now.date(), jobs))
 
 
 def _safely(kind: str, read: Any, *args: Any) -> list[dict[str, Any]]:
@@ -200,8 +211,12 @@ def for_person(items: list[dict[str, Any]], person: dict[str, Any]) -> list[dict
     return domain.rows_for_user(items, person["id"], person.get("role") == "owner")
 
 
+def _chosen(prefs: dict[str, list[str]], kind: str) -> list[str]:
+    return list(prefs[kind] if kind in prefs else KIND_DEFAULTS.get(kind, []))
+
+
 def _on_channel(items: list[dict[str, Any]], prefs: dict[str, list[str]], channel: str) -> list[dict[str, Any]]:
-    return [i for i in items if channel in (prefs.get(i["kind"]) or [])]
+    return [i for i in items if channel in (_chosen(prefs, i["kind"]) or [])]
 
 
 def email_message(items: list[dict[str, Any]], company: str, base: str) -> tuple[str, str]:
@@ -451,7 +466,7 @@ def mark_read(company_id: str, user_id: str, note_id: str = "") -> None:
 
 def page(state: dict[str, Any], person: dict[str, Any], now: datetime) -> dict[str, Any]:
     """What My account's Notifications card (and the Dashboard's To Do) shows this person."""
-    prefs = {kind: list((person.get("reminders") or {}).get(kind) or []) for kind in KINDS}
+    prefs = {kind: _chosen(person.get("reminders") or {}, kind) for kind in KINDS}
     notes = sync_notifications(state, person, now)
     return {"kinds": [{"key": k, "label": v[0], "help": v[1]} for k, v in KINDS.items()],
             "channels": [[k, v] for k, v in CHANNELS.items()], "prefs": prefs, "repeat_days": repeat_days(),

@@ -410,7 +410,7 @@ def set_reminders(user_id: str, prefs: dict[str, list[str]]) -> dict[str, Any]:
 
 # Someone new (signing up, or joining by invite) gets every reminder in the app; email and text
 # stay off until they pick them (round 1, item 19). Accounts from before keep what they chose.
-NEW_USER_REMINDERS = {"dates": ["app"], "missing": ["app"], "co_records": ["app"]}
+NEW_USER_REMINDERS = {"dates": ["app"], "missing": ["app"], "co_records": ["app"], "compliance": ["app"]}
 
 
 def new_user_reminders() -> dict[str, list[str]]:

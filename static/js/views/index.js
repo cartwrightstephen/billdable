@@ -24,13 +24,14 @@ import * as financials from "./financials.js";
 import * as automations from "./automations.js";
 import * as settings from "./settings.js";
 import * as auth from "./auth.js";
+import * as compliance from "./compliance.js";
 
 // name -> module, in the order the menu lists them. A module may export views, actions or both.
 export const MODULES = {
   dashboard, daily, jobs, job, jobCos, jobSov, jobRecord, jobPaperwork, clients,
   inbox, communications, data,
   payapps, paperwork, changeorders, collections, payments, closeout, financials,
-  automations, settings, auth,
+  automations, settings, auth, compliance,
 };
 
 export const views = Object.assign({}, ...Object.values(MODULES).map(m => m.views || {}));

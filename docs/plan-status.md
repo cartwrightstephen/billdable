@@ -108,7 +108,7 @@ checked against the chosen provider.
 | "Job's done" by text or email | Built |
 | Payer playbook learning | Built: Customer settings suggests paperwork items from pay apps sent back and drafts the customer wanted changed |
 | AI: classify documents, extract amounts and dates | **Not built, on purpose.** Needs an API key and the founders' go-ahead. Rule to keep when it is built: the model proposes and never writes a money field; every proposal goes through the same approval as a person's |
-| Lien and prompt-pay dates for one state | **Not built, on purpose.** Needs counsel to review the table first |
+| Lien and prompt-pay dates for one state | Lien dates built for Georgia, Nov 27 (Jobs, Compliance; `liens.py`), each citing its section, with a not-legal-advice note: counsel should still review the table. Prompt-pay dates not built |
 | Postgres and a second instance | **Not needed.** Measured on Oct 13 (`docs/benchmark.md`): far beyond a pilot on one box |
 
 ## Stephen's 15 features (from his messages and the Oct 12 calls)
@@ -129,7 +129,7 @@ checked against the chosen provider.
 | 12 | Payer playbook read by packet and follow-up | Built (Customer settings), and it learns |
 | 13 | Evidence binder | Built |
 | 14 | Retainage and closeout | Built |
-| 15 | Deadline calendar | Built for contract dates: follow-ups, approvals, the customer's monthly pay-app cutoff (Customer settings), with a Google Calendar feed. Lien and prompt-pay deadlines not built: they are state law and need counsel |
+| 15 | Deadline calendar | Built for contract dates: follow-ups, approvals, the customer's monthly pay-app cutoff (Customer settings), with a Google Calendar feed. Georgia lien deadlines built Nov 27 on Jobs, Compliance (for counsel to review); prompt-pay deadlines not built |
 
 From the calls, not built: voice follow-up agents (deferred until counsel; consent rules), AI
 filing (shelved for cost, as both founders agreed on the call). Decisions still open: 50/50 terms,

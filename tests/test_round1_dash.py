@@ -94,7 +94,7 @@ class SignUp(unittest.TestCase):
         cookie = res.getheader("Set-Cookie").split(";")[0]
         res, data = self.request("GET", "/api/reminders", cookie=cookie)
         self.assertEqual(res.status, 200)
-        self.assertEqual(data["prefs"], {"dates": ["app"], "missing": ["app"], "co_records": ["app"]})
+        self.assertEqual(data["prefs"], {"dates": ["app"], "missing": ["app"], "co_records": ["app"], "compliance": ["app"]})
         _, saved = self.request("POST", "/api/jobs", {"name": "Birch deck", "address": "5 Birch Rd", "customer": "Northline GC", "role": "GC", "approver": "Nia", "phone": "4045550177",
                                                       "ap_email": "ap@northline.example", "contract_cents": 2000000}, cookie=cookie)
         made = saved["jobs"][-1]

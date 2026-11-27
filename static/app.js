@@ -33,7 +33,7 @@ import { setAiVisible, updateAiContext } from "./js/views/helper.js";
 // into a filter on Pay apps; their old addresses land there (routes.js PATH_ALIASES).
 const SECTIONS = [
   { key: "today", label: "Dashboard", views: [["dashboard", "Overview"], ["calendar", "Calendar"]] },
-  { key: "jobs", label: "Jobs", views: [["jobs", "Open jobs"], ["daily", "New job record"], ["history", "Job history"], ["playbook", "Client playbook"]] },
+  { key: "jobs", label: "Jobs", views: [["jobs", "Open jobs"], ["daily", "New job record"], ["history", "Job history"], ["playbook", "Client playbook"], ["compliance", "Compliance"]] },
   { key: "communications", label: "Communications", views: [["inbox", "Inbox"], ["outbox", "Outbox"]] },
   { key: "data", label: "Import/Export", more: true, views: [["import", "Import"], ["export", "Export"]] },
   { key: "money", label: "Money", views: [["payapps", "Pay apps"], ["cos", "Change orders"], ["collections", "Unpaid"], ["waivers", "Closeout"], ["financials", "Financials"]] },

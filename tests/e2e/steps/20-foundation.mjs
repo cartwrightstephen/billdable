@@ -9,7 +9,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await page.getByRole("heading", { name: "Overview" }).waitFor();
     assert.deepEqual(await page.locator(".nav > button[data-section]").allInnerTexts().then(l => l.map(s => s.split("\n")[0].trim())),
       ["Dashboard", "Jobs", "Communications", "Import/Export", "Money", "Settings"]);
-    for (const [path, tabs] of [["/jobs", ["Open jobs", "New job record", "Job history", "Client playbook"]], ["/communications", ["Inbox", "Outbox"]],
+    for (const [path, tabs] of [["/jobs", ["Open jobs", "New job record", "Job history", "Client playbook", "Compliance"]], ["/communications", ["Inbox", "Outbox"]],
       ["/data/import", ["Import", "Export"]], ["/dashboard", ["Overview", "Calendar"]]]) {
       await page.goto(BASE + path);
       await page.locator(".tabs .tab", { hasText: tabs[tabs.length - 1] }).waitFor();
