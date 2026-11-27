@@ -310,6 +310,32 @@ class SecurityHttpTests(unittest.TestCase):
                                     headers={**evil, "Authorization": "Basic " + base64.b64encode(b"x:pw").decode()})
             self.assertEqual(res.status, 200, out)
 
+    def test_the_payapp_core_and_client_forms_posts_keep_the_cross_site_rules(self):
+        # Integration (Nov 27, second pass): payapp-core's job actions and gc-forms' routes, the
+        # raw-body uploads among them, are refused from another site and not from the app.
+        host = f"127.0.0.1:{self.port}"
+        evil, own = {"Origin": "https://evil.example"}, {"Origin": f"http://{host}"}
+        _, snap = self.request("GET", "/api/state", cookie=self.owner)
+        payer = snap["jobs"][0]["payer_id"]
+        posts = [(f"/api/jobs/{self.job_id}/earlier-payapps", {"payapps": []}), (f"/api/jobs/{self.job_id}/earlier-payapps-remove", {}),
+                 (f"/api/jobs/{self.job_id}/line-retainage", {"pcts": {}}), (f"/api/jobs/{self.job_id}/payapp-retainage", {"pct": "5"}),
+                 (f"/api/jobs/{self.job_id}/retainage-release", {"stage": "final"}),
+                 (f"/api/payers/{payer}/client-forms/gcf-0123456789/match", {"mapping": []}),
+                 (f"/api/payers/{payer}/client-forms/gcf-0123456789/note", {"note": "x"}),
+                 (f"/api/payers/{payer}/client-forms/gcf-0123456789/retire", {}), (f"/api/payers/{payer}/client-forms/send", {"send": "ours"})]
+        for path, body in posts:
+            res, data = self.request("POST", path, body, cookie=self.owner, headers=evil)
+            self.assertEqual(res.status, 403, path)
+            self.assertIn("another site", data["error"], path)
+            res, data = self.request("POST", path, body, cookie=self.owner, headers=own)
+            self.assertNotIn("another site", str(data.get("error", "")) if isinstance(data, dict) else "", path)
+        for path, ctype, name in ((f"/api/payers/{payer}/client-forms/upload/payapp", "application/pdf", "form.pdf"),
+                                  (f"/api/import/file?job={self.job_id}&file=1&kind=other&history=inv-x", "application/pdf", "old-pa-1.pdf")):
+            res, data = self.request("POST", path, raw=b"%PDF-1.4 x", cookie=self.owner, headers={**evil, "Content-Type": ctype, "X-Filename": name})
+            self.assertEqual(res.status, 403, path)
+            self.assertIn("another site", data["error"], path)
+        self.assertEqual(server.load_company(self.company).get("gc_forms", {}).get("templates", []), [], "nothing was stored from another site")
+
     # ----- M2: password asked again, and throttled -----
 
     def test_password_checks_in_a_session_are_throttled(self):
