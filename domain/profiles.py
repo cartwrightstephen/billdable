@@ -138,7 +138,7 @@ def _sensitive_record(record: dict[str, Any]) -> bool:
 
 def sensitive_file_ids(state: dict[str, Any]) -> set[str]:
     """The ids of the files that take "sensitive_docs" to open: on a job record of a sensitive kind,
-    a job's contract, or an Inbox item that reads as one."""
+    a job's contract, an Inbox item that reads as one, or a compliance W-9 or certified payroll."""
     out: set[str] = set()
     for job in state.get("jobs", []):
         if job.get("contract_file_id"):
@@ -149,6 +149,12 @@ def sensitive_file_ids(state: dict[str, Any]) -> set[str]:
     for item in state.get("inbox", []):
         if item.get("kind") in SENSITIVE_KINDS or item.get("filed_kind") in SENSITIVE_KINDS:
             out.update(str(f) for f in item.get("file_ids") or [])
+    # Jobs, Compliance: a W-9 or certified payroll (compliance.SENSITIVE_TYPES) is as private as
+    # payroll on a job record, by /api/files/<id>, the compliance tab's own link and the export.
+    import compliance
+    for doc in (state.get("compliance") or {}).get("docs") or []:
+        if isinstance(doc, dict) and doc.get("file_id") and doc.get("type") in compliance.SENSITIVE_TYPES:
+            out.add(str(doc["file_id"]))
     return out
 
 

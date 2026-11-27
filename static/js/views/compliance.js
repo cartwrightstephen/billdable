@@ -72,7 +72,10 @@ function jobOptions(blank) {
 function docRow(d, edit) {
   const days = d.days_left == null ? "" : d.days_left < 0 ? "" : ` (${d.days_left} day${d.days_left === 1 ? "" : "s"})`;
   const who = [d.holder, d.issuer].filter(Boolean).join(" · ");
-  const fileLink = d.file_id ? `<a href="/api/compliance/docs/${d.id}/file" target="_blank" rel="noopener">Open file</a>` : `<span class="sub">No file yet</span>`;
+  // A W-9 or certified payroll takes "See payroll and sensitive documents" to open (the server refuses it otherwise).
+  const fileLink = !d.file_id ? `<span class="sub">No file yet</span>`
+    : d.sensitive && !can("sensitive_docs") ? `<span class="sub">On file (private)</span>`
+    : `<a href="/api/compliance/docs/${d.id}/file" target="_blank" rel="noopener">Open file</a>`;
   return `<tr>
     <td><strong>${d.type_label}</strong>${d.sensitive ? ` <span class="pill">Private</span>` : ""}${d.payer ? `<div class="sub">For ${d.payer}${d.additional_insured ? ", additional insured" : ""}</div>` : ""}${who ? `<div class="sub">${who}</div>` : ""}${d.number ? `<div class="sub">No. ${d.number}</div>` : ""}</td>
     <td>${d.effective_on ? fmtDate(d.effective_on) : "—"}</td>
@@ -99,7 +102,7 @@ function addDocForm() {
       ${field({ form: f, name: "payer_id", id: "cdoc-payer", label: "For a client", options: payerOptions("Every client (the company's own)") })}
       ${field({ form: f, name: "job_id", id: "cdoc-job", label: "For a job", options: jobOptions("Every job") })}
       <div class="field"><label class="terms-check"><input type="checkbox" id="cdoc-ai" data-field="additional_insured" value="1"> Names the client as additional insured (a COI)</label></div>
-      <div class="field"><label for="cdoc-file">File</label><input type="file" id="cdoc-file" accept=".pdf,.png,.jpg,.jpeg,.heic,.doc,.docx"><span class="sub field-help">A W-9 or certified payroll opens only for people who can edit company details.</span></div>
+      <div class="field"><label for="cdoc-file">File</label><input type="file" id="cdoc-file" accept=".pdf,.png,.jpg,.jpeg,.heic,.doc,.docx"><span class="sub field-help">A W-9 or certified payroll opens only for people who can see payroll and sensitive documents.</span></div>
     </div>
     <button class="btn" data-action="compliance-add-doc">Save document</button></div></details>`;
 }

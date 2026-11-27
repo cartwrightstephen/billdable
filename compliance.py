@@ -20,7 +20,8 @@ Kept in state["compliance"], apart from the jobs, so nothing else's shape change
 
 Files go through the importer's store (importer.store_bytes), registered on state["files"] with
 the importer's kind (insurance, payroll, other) and, for a W-9 or certified payroll, sensitive:
-only people with the company permission open those (server.py).
+only people with "See payroll and sensitive documents" (sensitive_docs) open those, here and by
+/api/files/<id>, and the export with files leaves them out for others (profiles.sensitive_file_ids).
 
 Reminders: reminders.py's "compliance" kind reads reminder_items(): a document expiring within a
 reminder day or expired, a client's requirement with nothing current on file, and a lien
@@ -241,13 +242,11 @@ def attach_file(state: dict[str, Any], doc_id: str, meta: dict[str, Any], actor:
 
 
 def is_sensitive_file(state: dict[str, Any], file_id: str) -> bool:
+    """A W-9 or certified payroll's file: it takes "See payroll and sensitive documents" to open,
+    like payroll on a job record (domain.profiles.sensitive_file_ids, which reads SENSITIVE_TYPES)."""
+    from domain import profiles
     meta = next((m for m in state.get("files", []) if m["id"] == file_id), None)
-    if not meta:
-        return False
-    if meta.get("sensitive"):
-        return True
-    doc = next((d for d in (state.get("compliance") or {}).get("docs", []) if d.get("file_id") == file_id), None)
-    return bool(doc and doc.get("type") in SENSITIVE_TYPES)
+    return bool(meta and (meta.get("sensitive") or file_id in profiles.sensitive_file_ids(state)))
 
 
 def doc_words(state: dict[str, Any], doc: dict[str, Any]) -> str:

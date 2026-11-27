@@ -11,6 +11,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import compliance
 import domain
+import server
+from domain import profiles
 import importer
 import liens
 import reminders
@@ -307,11 +309,52 @@ class Http(ServerCase):
         self.assertEqual(out["compliance"]["docs"], [])
         self.assertFalse(path.exists(), "the W-9's file goes with it")
 
+    def test_w9_and_payroll_take_sensitive_docs_not_the_company_permission(self):
+        # Integration (Nov 27): compliance's private files follow dev's "See payroll and sensitive
+        # documents" (profiles.sensitive_file_ids), by every address, the export with files too.
+        import io
+        import zipfile
+        c = self.cookie
+        files = {}
+        for kind in ("w9", "payroll", "coi"):
+            _, out = self.request("POST", "/api/compliance/docs", {"type": kind}, cookie=c)
+            doc_id = out["doc_id"]
+            res, out = self.request("POST", f"/api/compliance/docs/{doc_id}/file", raw=b"%PDF-1.4 " + kind.encode(), cookie=c,
+                                    headers={"Content-Type": "application/pdf", "X-Filename": f"{kind}.pdf"})
+            self.assertEqual(res.status, 200, out)
+            files[kind] = (doc_id, next(d["file_id"] for d in out["compliance"]["docs"] if d["id"] == doc_id))
+        state = server.load_company(self.company_id(c))
+        self.assertTrue({files["w9"][1], files["payroll"][1]} <= profiles.sensitive_file_ids(state))
+        self.assertNotIn(files["coi"][1], profiles.sensitive_file_ids(state))
+        for name, perms in (("Paperwork", ["company"]), ("Payroll", ["sensitive_docs"]), ("Books", ["data"])):
+            res, out = self.request("POST", "/api/team/profiles", {"name": name, "perms": perms}, cookie=c)
+            self.assertEqual(res.status, 200, out)
+        ids = {p["name"]: p["id"] for p in out["profiles"]}
+
+        def opens(cookie):
+            return {kind: (self.request("GET", f"/api/files/{fid}", cookie=cookie)[0].status,
+                           self.request("GET", f"/api/compliance/docs/{doc_id}/file", cookie=cookie)[0].status)
+                    for kind, (doc_id, fid) in files.items()}
+        company_only = self.join(c, f"p{id(self)}@example.com", ids["Paperwork"])
+        self.assertEqual(opens(company_only), {"w9": (403, 403), "payroll": (403, 403), "coi": (200, 200)},
+                         "editing company details doesn't open payroll or a W-9")
+        sensitive = self.join(c, f"s{id(self)}@example.com", ids["Payroll"])
+        self.assertEqual(opens(sensitive), {"w9": (200, 200), "payroll": (200, 200), "coi": (200, 200)})
+        books = self.join(c, f"b{id(self)}@example.com", ids["Books"])
+        res, raw = self.request("GET", "/api/export/with-files.zip", cookie=books)
+        self.assertEqual(res.status, 200)
+        names = zipfile.ZipFile(io.BytesIO(raw)).namelist()
+        has = lambda fid: any(n.startswith(f"files/{fid}-") for n in names)
+        self.assertEqual((has(files["w9"][1]), has(files["payroll"][1]), has(files["coi"][1])), (False, False, True))
+        # The page is told which to show without a link.
+        _, snap = self.request("GET", "/api/state", cookie=company_only)
+        self.assertEqual({f["id"] for f in snap["files"] if f.get("sensitive")}, {files["w9"][1], files["payroll"][1]})
+
     def company_id(self, cookie):
         return self.request("GET", "/api/auth/me", cookie=cookie)[1]["user"]["company_id"]
 
-    def join(self, owner, addr):
-        res, out = self.request("POST", "/api/team/invite", {"email": addr, "profile_id": "member"}, cookie=owner)
+    def join(self, owner, addr, profile_id="member"):
+        res, out = self.request("POST", "/api/team/invite", {"email": addr, "profile_id": profile_id}, cookie=owner)
         self.assertEqual(res.status, 200, out)
         res, joined = self.request("POST", "/api/auth/accept-invite", {"accept_terms": True, "token": out["invite_path"].split("#invite=")[1],
                                                                        "name": "Mo", "password": "member password 1"})

@@ -3788,15 +3788,15 @@ class Handler(BaseHTTPRequestHandler):
         self._json(status, payload)
 
     def _g_compliance_doc_file(self, m, user) -> None:
-        """A document's file. A W-9 or certified payroll opens only for those with the company
-        permission (compliance.SENSITIVE_TYPES)."""
+        """A document's file. A W-9 or certified payroll opens only for those with "See payroll and
+        sensitive documents", as /api/files/<id> (profiles.may_open_file)."""
         state = company_state(user["company_id"])
         doc = next((d for d in (state.get("compliance") or {}).get("docs", []) if d["id"] == m.group(1)), None)
         if not doc or not doc.get("file_id"):
             self._json(404, {"error": "File not found."})
             return
-        if compliance.is_sensitive_file(state, doc["file_id"]) and not has_perm(user, "company", state):
-            self._json(403, {"error": NO_PERMISSION})
+        if not profiles.may_open_file(user, state, doc["file_id"]):
+            self._json(403, {"error": SENSITIVE_WORDS})
             return
         self._serve_file(user["company_id"], state, doc["file_id"])
 
