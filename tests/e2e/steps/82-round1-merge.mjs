@@ -73,6 +73,16 @@ export default async function ({ BASE, step, signedInPage }) {
       await p.goto(`${BASE}/jobs/daily`);
       await p.selectOption("#daily-job", id);
       const box = p.locator('input[aria-label="Contract amount: % done to date"]');
+      try {
+        await box.waitFor({ timeout: 15000 });
+      } catch (e) {
+        // Say what the form shows instead, so a failure on another machine can be read from its log.
+        const seen = await p.evaluate(() => ({ job: document.querySelector("#daily-job")?.value,
+          options: [...document.querySelectorAll("#daily-job option")].length,
+          labels: [...document.querySelectorAll("input[aria-label]")].map((i) => i.getAttribute("aria-label")).slice(0, 12),
+          text: (document.querySelector('[data-form-key="daily"]')?.innerText || document.body.innerText).slice(0, 600) }));
+        throw new Error(`No % done box for job ${id} at ${pct}%: ${JSON.stringify(seen)}`);
+      }
       await box.fill(pct);
       await p.fill("#daily-notes", `Walked the job at ${pct}%`);
       await p.getByRole("button", { name: "Save job record" }).click();
