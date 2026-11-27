@@ -63,9 +63,11 @@ TEMPLATES: list[dict[str, Any]] = [
     {"id": "office", "name": "Accountant or office", "profile_name": "Accountant",
      "about": "Sends and approves pay apps, waivers and retainage requests, records payments, pulls back mistakes, sees the financials and the bill. Doesn't change jobs, the team or the company.",
      "perms": ["send_payapps", "approve_payapps", "send_waivers", "ask_retainage", "record_payments", "void", "billing", "financials"]},
+    # As the Project manager profile of the case company (case_company.py PROFILES): runs the jobs
+    # and signs off pay apps; the office sends them (Nov 27 hunt: the two differed).
     {"id": "pm", "name": "Project manager", "profile_name": "Project manager",
-     "about": "Runs jobs: changes contracts and change orders, marks work done, finishes jobs, approves and sends pay apps, waivers and retainage requests.",
-     "perms": ["send_payapps", "approve_payapps", "send_waivers", "ask_retainage", "close_jobs", "manage_jobs"]},
+     "about": "Runs jobs: changes contracts and change orders, marks work done, finishes jobs, and approves pay apps before they go. The office sends them.",
+     "perms": ["approve_payapps", "close_jobs", "manage_jobs"]},
     {"id": "super", "name": "Superintendent", "profile_name": "Superintendent",
      "about": "On site: marks work done and keeps change orders up to date, beside the job records everyone keeps. Sends nothing to clients.",
      "perms": ["manage_jobs"]},

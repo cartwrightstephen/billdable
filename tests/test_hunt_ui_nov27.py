@@ -100,5 +100,14 @@ class ReleaseChecksTests(unittest.TestCase):
         self.assertTrue(any(str(i.get("waiver_kind", "")).startswith("conditional") for i in rel["packet"]), "the conditional waiver stays")
 
 
+class TemplateTests(unittest.TestCase):
+    def test_the_project_manager_template_matches_the_project_manager_profile(self):
+        from domain import profiles
+        import case_company
+        pm = next(t for t in profiles.TEMPLATES if t["id"] == "pm")
+        case_pm = next(p for p in case_company.PROFILES if p["name"] == "Project manager")
+        self.assertEqual(set(pm["perms"]), set(case_pm["perms"]))
+
+
 if __name__ == "__main__":
     unittest.main()
