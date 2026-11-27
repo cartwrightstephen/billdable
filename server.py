@@ -821,6 +821,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send(code, json.dumps(payload).encode(), "application/json", headers)
 
     def _read_json(self) -> dict:
+        self._require_json()
         raw_length = self.headers.get("Content-Length", "0") or "0"
         try:
             length = int(raw_length)
@@ -1161,7 +1162,54 @@ class Handler(BaseHTTPRequestHandler):
         self._dispatch("GET")
 
     def _post(self) -> None:
+        if self._cross_site_refused():
+            return
         self._dispatch("POST")
+
+    # Posted by services, not browsers, each with its own check: the email service and Twilio
+    # (token and signature or password), the mail provider's events (token), Stripe (signature),
+    # and the phone's share menu (Sec-Fetch-Site, _share_target).
+    CROSS_SITE_OK = ("/api/inbound/", "/api/mail-events/", "/api/stripe/webhook", "/share")
+    # The bodies a cross-site HTML form can send without the browser asking first (M1).
+    FORM_TYPES = ("application/x-www-form-urlencoded", "multipart/form-data", "text/plain")
+
+    def _cross_site_refused(self) -> bool:
+        """M1: a POST from another site's page is refused, so a signed-in person's browser can't be
+        made to sign in, sign out, or change anything by a page elsewhere. SameSite=Lax cookies
+        already stop most of it; this checks the Origin header the browser sends with every POST
+        (Sec-Fetch-Site where there is none). A request without either is not from a browser page.
+        Answers and returns True when refused."""
+        path = urlparse(self.path).path
+        if path.startswith(self.CROSS_SITE_OK):
+            return False
+        origin = (self.headers.get("Origin") or "").strip()
+        if origin:
+            ok = origin != "null" and urlparse(origin).netloc.lower() in self._own_hosts()
+        else:
+            ok = (self.headers.get("Sec-Fetch-Site") or "").lower() != "cross-site"
+        if not ok:
+            log_json("warn", msg="cross-site post refused", path=redact(path), rid=self._rid)
+            self.close_connection = True
+            self._json(403, {"error": "This request came from another site, so it was refused. Open Duracash and try again."})
+        return not ok
+
+    def _own_hosts(self) -> set:
+        """This site's host names as a browser addresses it: DURACASH_URL's, and the Host the
+        request came to (a browser always sends the one in its address bar)."""
+        hosts = {(self.headers.get("Host") or "").strip().lower()}
+        forwarded = (self.headers.get("X-Forwarded-Host") or "").split(",")[0].strip().lower()
+        if forwarded:
+            hosts.add(forwarded)
+        url = app_url()
+        if url:
+            hosts.add(urlparse(url).netloc.lower())
+        return hosts - {""}
+
+    def _require_json(self) -> None:
+        """A JSON route refuses the body types a cross-site form can send (M1)."""
+        ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if ctype in self.FORM_TYPES:
+            raise BadRequest("Send JSON (Content-Type: application/json).", 415)
 
     def _get_fallback(self, path: str) -> None:
         if path in {"/", "/index.html"} or (APP_PATH_RE.match(path) and path.split("/")[1] in APP_SECTIONS):
@@ -1810,6 +1858,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _p_demo(self, m) -> None:
         """Look around before signing up (R2-06): a session as the demo owner, no password typed."""
+        self._require_json()
         user = demo_user()
         if not user:
             self._json(404, {"error": "There is no sample company on this server."})
@@ -1817,6 +1866,7 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"user": user}, self._set_cookie(auth.create_session(user)))
 
     def _p_logout(self, m) -> None:
+        self._require_json()
         auth.destroy_session(self._token())
         self._json(200, {"ok": True}, self._set_cookie(None))
 
@@ -2078,7 +2128,7 @@ class Handler(BaseHTTPRequestHandler):
         step = m.group(1)
         try:
             if step == "begin":
-                setup = auth.totp_begin(ctx.user["id"])
+                setup = auth.totp_begin(ctx.user["id"], ctx.body.get("password"))
                 # A QR code of the same key, for the phone's authenticator app to scan (R6-05).
                 self._json(200, {**setup, "qr": qr.data_uri(setup["uri"])})
             elif step == "enable":
@@ -2374,7 +2424,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def _delete_account(self, body: dict, user: dict) -> None:
         company_id = user["company_id"]
-        if not auth.check_password(user["id"], body.get("password")):
+        try:
+            right = auth.check_password(user["id"], body.get("password"))
+        except auth.RateLimited as exc:
+            self._json(429, {"error": str(exc)})
+            return
+        if not right:
             self._json(409, {"error": "Password is wrong. Nothing was deleted."})
             return
         with company_lock(company_id):
@@ -2953,7 +3008,11 @@ class Handler(BaseHTTPRequestHandler):
             raise domain.GateError("Reset not done. Type your company name exactly to confirm.",
                                    ["Reset deletes every job, client and record in this company."])
         # As Delete asks for it: a session left open on a shared computer can't wipe the company (R6-05).
-        if not auth.check_password(ctx.user["id"], ctx.body.get("password")):
+        try:
+            right = auth.check_password(ctx.user["id"], ctx.body.get("password"))
+        except auth.RateLimited as exc:
+            raise domain.GateError(f"Reset not done. {exc}")
+        if not right:
             raise domain.GateError("Reset not done. Your password is wrong.", fields={"password": "Enter your password to confirm."})
         if company_exists(company_id):
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")

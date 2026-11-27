@@ -112,7 +112,10 @@ class TwoStepHttpTests(unittest.TestCase):
         res, data = self.request("/api/auth/signup", {"accept_terms": True, "email": "two@example.com", "password": PASSWORD,
                                                       "name": "Pat", "company_name": "Pine"})
         cookie = res.getheader("Set-Cookie").split(";")[0]
-        res, setup = self.request("/api/auth/2fa/begin", {}, cookie)
+        # The set-up asks for the password again (M2): a session alone can't add a phone.
+        res, data = self.request("/api/auth/2fa/begin", {}, cookie)
+        self.assertEqual((res.status, data["error"]), (400, "Password is wrong."))
+        res, setup = self.request("/api/auth/2fa/begin", {"password": PASSWORD}, cookie)
         self.assertEqual(res.status, 200)
         secret = setup["secret"]
         res, data = self.request("/api/auth/2fa/enable", {"code": "000000"}, cookie)
@@ -154,7 +157,7 @@ class TwoStepHttpTests(unittest.TestCase):
         res, _ = self.request("/api/auth/signup", {"accept_terms": True, "email": "qr@example.com", "password": PASSWORD,
                                                    "name": "Pat", "company_name": "Pine"})
         cookie = res.getheader("Set-Cookie").split(";")[0]
-        res, setup = self.request("/api/auth/2fa/begin", {}, cookie)
+        res, setup = self.request("/api/auth/2fa/begin", {"password": PASSWORD}, cookie)
         self.assertEqual(res.status, 200)
         self.assertTrue(setup["qr"].startswith("data:image/svg+xml;base64,"))
         drawing = base64.b64decode(setup["qr"].split(",", 1)[1]).decode()
@@ -163,7 +166,7 @@ class TwoStepHttpTests(unittest.TestCase):
     def test_reset_link_does_not_skip_the_code(self):  # R6-05
         auth.create_user("reset2@example.com", PASSWORD, "Pat", "co-rst")
         uid = auth.user_by_email("reset2@example.com")["id"]
-        secret = auth.totp_begin(uid)["secret"]
+        secret = auth.totp_begin(uid, PASSWORD)["secret"]
         auth.totp_enable(uid, totp.code_at(secret, int(time.time() // 30)))
         raw, _ = auth.password_reset_token("reset2@example.com")
         res, data = self.request("/api/auth/reset", {"token": raw, "password": "a brand new password"})
@@ -184,7 +187,7 @@ class TwoStepHttpTests(unittest.TestCase):
     def test_wrong_codes_are_throttled(self):
         auth.create_user("thr@example.com", PASSWORD, "Pat", "co-thr")
         uid = auth.user_by_email("thr@example.com")["id"]
-        secret = auth.totp_begin(uid)["secret"]
+        secret = auth.totp_begin(uid, PASSWORD)["secret"]
         auth.totp_enable(uid, totp.code_at(secret, int(time.time() // 30)))
         login = {"email": "thr@example.com", "password": PASSWORD}
         statuses = [self.request("/api/auth/login", {**login, "code": "111111"})[0].status for _ in range(auth.LOGIN_FREE_FAILURES + 1)]
@@ -341,7 +344,7 @@ class EmailCodeTests(ServerCase):
         self.mail_on()
         cookie, _ = self.signup("swap@pine.example")
         uid = auth.user_by_email("swap@pine.example")["id"]
-        secret = auth.totp_begin(uid)["secret"]
+        secret = auth.totp_begin(uid, PASSWORD)["secret"]
         auth.totp_enable(uid, totp.code_at(secret, int(time.time() // 30)))
         later = time.time() + 30
         with mock.patch.object(totp.time, "time", lambda: later):
