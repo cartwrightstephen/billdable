@@ -956,3 +956,14 @@ fieldset.co-items legend, fieldset.co-backup legend { color: var(--muted); font-
 .gate-list { list-style: none; padding: 0; margin: 6px 0; }
 .gate-list li { padding: 2px 0; }
 .send-soft { margin: 10px 0; }
+/* The client's own forms (views/gcforms.js) */
+.client-forms .cf-form { display: block; }
+.cf-name { font-family: ui-monospace, Menlo, monospace; font-size: 13px; overflow-wrap: anywhere; }
+.cf-fields select { max-width: 100%; }
+.cf-fields td { vertical-align: top; }
+.cf-row { width: 5em; }
+.cf-placed { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.cf-placed input[type="number"] { width: 6em; }
+.cf-match h4 { margin: 14px 0 4px; }
+.cf-note textarea { width: 100%; }
+.cf-problems { margin: 4px 0; padding-left: 20px; }
