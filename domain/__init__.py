@@ -4239,7 +4239,10 @@ def payer_timing(state: dict[str, Any]) -> dict[str, tuple[float, int]]:
         for inv in job.get("invoices", []):
             if inv.get("status") != "paid" or not inv.get("sent_at"):
                 continue
-            paid = [p.get("matched_at", "") for p in job.get("payments", []) if p.get("invoice_id") == inv["id"]]
+            on_it = [p for p in job.get("payments", []) if p.get("invoice_id") == inv["id"]]
+            if any(p.get("undated") for p in on_it):   # an earlier pay app paid on a day nobody entered
+                continue
+            paid = [p.get("matched_at", "") for p in on_it]
             try:
                 days = (datetime.fromisoformat(max(paid)).date() - datetime.fromisoformat(inv["sent_at"]).date()).days if paid else None
             except ValueError:

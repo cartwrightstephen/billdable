@@ -39,8 +39,12 @@ def _day(value: Any) -> date | None:
 
 
 def _paid_on(job: dict[str, Any], invoice: dict[str, Any]) -> date | None:
-    """The day the last payment on a paid pay app was recorded (domain.payer_timing's rule)."""
-    days = [d for d in (_day(p.get("matched_at")) for p in job.get("payments", []) if p.get("invoice_id") == invoice.get("id")) if d]
+    """The day the last payment on a paid pay app was recorded (domain.payer_timing's rule); None
+    when one was entered with no date (an earlier pay app's, payapp_core: "undated")."""
+    paid = [p for p in job.get("payments", []) if p.get("invoice_id") == invoice.get("id")]
+    if any(p.get("undated") for p in paid):
+        return None
+    days = [d for d in (_day(p.get("matched_at")) for p in paid) if d]
     return max(days) if days else None
 
 

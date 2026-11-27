@@ -56,9 +56,10 @@ def compute(state: dict[str, Any], today: date | None = None, since: date | None
                 continue
             sent_count += 1
             sent_cents += inv["amount_cents"]
-            if inv["status"] == "paid":
-                paid_on = max((d for d in (_day(p.get("matched_at")) for p in job.get("payments", []) if p.get("invoice_id") == inv["id"]) if d),
-                              default=None)
+            on_it = [p for p in job.get("payments", []) if p.get("invoice_id") == inv["id"]]
+            # An earlier pay app paid on a day nobody entered (payapp_core: "undated") has no days to pay.
+            if inv["status"] == "paid" and not any(p.get("undated") for p in on_it):
+                paid_on = max((d for d in (_day(p.get("matched_at")) for p in on_it) if d), default=None)
                 if paid_on:
                     days = (paid_on - sent).days
                     sent_to_paid.append(days)
@@ -103,15 +104,18 @@ def month_summary(state: dict[str, Any], year: int, month: int) -> tuple[str, st
     for job in state.get("jobs", []):
         for inv in job.get("invoices", []):
             d = _day(inv.get("sent_at"))
-            if inv.get("status") in LIVE and d and first <= d < nxt:
+            # A pay app billed before Duracash (payapp_core) wasn't sent from here, nor was its payment recorded here.
+            if inv.get("status") in LIVE and d and first <= d < nxt and not inv.get("imported"):
                 sent.append(inv)
         for p in job.get("payments", []):
+            if p.get("imported"):
+                continue
             d = _day(p.get("matched_at"))
             if d and first <= d < nxt:
                 paid.append(p)
                 inv = next((i for i in job.get("invoices", []) if i["id"] == p.get("invoice_id")), None)
                 sd = _day(inv.get("sent_at")) if inv else None
-                if sd:
+                if sd and not p.get("undated"):
                     days.append((d - sd).days)
     refunded = sum(int(s.get("returned_cents", s.get("cents") or 0)) for job in state.get("jobs", []) for s in job.get("overbilling_settled") or []
                    if first <= (_day(s.get("at")) or date.min) < nxt)

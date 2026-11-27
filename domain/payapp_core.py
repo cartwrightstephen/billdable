@@ -450,7 +450,7 @@ def import_earlier_payapps(state: dict[str, Any], job_id: str, body: Any, actor:
             invoice["status"] = "paid"
         if paid:
             invoice["waiver_covered_cents"] = paid
-            pending_payments.append((invoice, paid, a["paid_on"] or a["period_to"]))
+            pending_payments.append((invoice, paid, a["paid_on"]))
         if invoice["status"] == "paid":
             invoice["waiver_not_needed"] = {"reason": "Billed and paid before Duracash; its waivers were handled then.", "at": D.utcnow(), "by": actor}
         invoice["contract_at_send"] = payapp_pdf.contract_terms(job)
@@ -463,8 +463,13 @@ def import_earlier_payapps(state: dict[str, Any], job_id: str, body: Any, actor:
         ref = f"before-{invoice['number']}"
         while ref in refs:
             ref += "-x"
-        job["payments"].append({"id": f"pay-{len(job['payments']) + 1}-h{secrets.token_hex(2)}", "amount_cents": paid, "reference": ref,
-                                "invoice_id": invoice["id"], "matched_at": f"{day}T12:00:00+00:00", "imported": True})
+        payment = {"id": f"pay-{len(job['payments']) + 1}-h{secrets.token_hex(2)}", "amount_cents": paid, "reference": ref,
+                   "invoice_id": invoice["id"], "matched_at": f"{day or invoice['period_to']}T12:00:00+00:00", "imported": True}
+        if not day:
+            # Paid on a day nobody entered: dated at the end of its period for the books, and left
+            # out of how long the client takes to pay (paydate, Results), which it would put at 0 days.
+            payment["undated"] = True
+        job["payments"].append(payment)
     # The lines stand at what is billed: nothing earlier shows as work still to bill.
     for line in sov.lines(job):
         qty = qty_before.get(line["id"], 0)
