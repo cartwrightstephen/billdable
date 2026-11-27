@@ -202,7 +202,28 @@ class RecoveryTests(unittest.TestCase):
             (self.root / name).write_text("{}" if name != "deleted_companies.json" else "[]")
         with tarfile.open(backup.make_backup()) as tar:
             names = set(tar.getnames())
-        self.assertLessEqual({"deleted_companies.json", "qbo_connections.json", "monthly_jobs.json", "daily_jobs.json"}, names)
+        self.assertLessEqual({"deleted_companies.json", "monthly_jobs.json", "daily_jobs.json"}, names)
+        # QuickBooks tokens never go into a backup (H4): a deleted company's would outlive it there.
+        self.assertNotIn("qbo_connections.json", names)
+
+    def test_an_older_backup_with_quickbooks_tokens_restores_without_them(self):  # H4
+        (self.root / "qbo_connections.json").write_text('{"co-1": {"refresh_token": "old"}}')
+        older = self.root / "backups" / "duracash-20260101T000000000000Z.tar.gz"
+        older.parent.mkdir(parents=True, exist_ok=True)
+        made = backup.make_backup()
+        with tarfile.open(made) as src, tarfile.open(older, "w:gz") as tar:
+            for member in src.getmembers():
+                tar.addfile(member, src.extractfile(member))
+            data = b'{"co-1": {"refresh_token": "from the backup"}}'
+            info = tarfile.TarInfo("qbo_connections.json")
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+        (self.root / "qbo_connections.json").write_text('{"co-1": {"refresh_token": "current"}}')
+        (self.root / "schema_version.json").write_text('{"schema": 1}')
+        backup.restore(older)
+        self.assertEqual(json.loads((self.root / "qbo_connections.json").read_text())["co-1"]["refresh_token"], "current",
+                         "the backup's tokens are read past; the live connections stay")
+        self.assertFalse((self.root / "schema_version.json").exists(), "the next start backs the restored data up again (H7)")
 
     def test_restore_of_a_deleted_company_is_refused_or_visible(self):
         path = backup.make_backup()

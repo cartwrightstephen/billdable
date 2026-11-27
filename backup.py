@@ -93,12 +93,13 @@ def newest_time() -> str | None:
     return datetime.fromtimestamp(found[0].stat().st_mtime, timezone.utc).isoformat(timespec="seconds")
 
 
-def make_backup(locks: dict[str, Any] | None = None, uploads: bool | None = None, into: Path | None = None) -> Path:
+def make_backup(locks: dict[str, Any] | None = None, uploads: bool | None = None, into: Path | None = None, label: str = "") -> Path:
     """Write one backup. JSON files are read under the lock that guards them, one lock at a time
     (never nested, so a backup can't deadlock with a request); company files are replaced whole
     by a rename and the SQLite database is copied with its own backup API, so neither needs a
     lock; uploads never change once written. `uploads` overrides BACKUP_UPLOADS; `into` writes
-    it to another folder, outside the rotation (the off-site copy with uploads)."""
+    it to another folder, outside the rotation (the off-site copy with uploads); `label` goes on the
+    end of the name (the backup made before a data upgrade, H7)."""
     locks = locks or {}
     with_uploads = bool(settings()["uploads"]) if uploads is None else uploads
     data_dir = Path(storage.DATA_DIR)
@@ -125,7 +126,7 @@ def make_backup(locks: dict[str, Any] | None = None, uploads: bool | None = None
         target = into or folder()
         target.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-        final = target / f"{PREFIX}{stamp}{SUFFIX}"
+        final = target / f"{PREFIX}{stamp}{'-' + label if label else ''}{SUFFIX}"
         tmp = target / f".{final.name}.tmp"
         with tarfile.open(tmp, "w:gz") as tar:
             for rel, data in members:
@@ -233,6 +234,9 @@ def restore(path: str | Path) -> Path:
     for item in staging.iterdir():
         shutil.move(str(item), str(data_dir / item.name))
     staging.rmdir()
+    # Which schema the data was last opened with (server.backup_before_upgrade) is no longer known:
+    # the next start backs the restored data up again before it upgrades anything (H7).
+    (data_dir / "schema_version.json").unlink(missing_ok=True)
     return aside
 
 

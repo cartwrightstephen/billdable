@@ -738,6 +738,25 @@ class Server(ThreadingHTTPServer):
     daemon_threads = True
     request_queue_size = 64
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._busy = 0
+        self._busy_cond = threading.Condition()
+
+    def busy(self, delta: int) -> None:
+        """Count the requests being answered (not idle kept-alive connections), for drain()."""
+        with self._busy_cond:
+            self._busy += delta
+            self._busy_cond.notify_all()
+
+    def drain(self, seconds: float) -> int:
+        """After shutdown(): wait up to `seconds` for the requests being answered. Returns how many were left."""
+        deadline = time.monotonic() + seconds
+        with self._busy_cond:
+            while self._busy > 0 and time.monotonic() < deadline:
+                self._busy_cond.wait(max(0.0, deadline - time.monotonic()))
+            return self._busy
+
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "Duracash"
@@ -3736,11 +3755,78 @@ def _signed_by_provider(data: bytes, raw_ctype: str, key: str, now: float | None
     return fresh and bool(nonce) and hmac.compare_digest(expected, signature)
 
 
+SCHEMA_MARKER = "schema_version.json"
+
+
+def _marker_path() -> Path:
+    return storage.DATA_DIR / SCHEMA_MARKER
+
+
+def _has_data() -> bool:
+    return auth.AUTH_PATH.exists() or bool(company_ids())
+
+
+def backup_before_upgrade(log=None) -> Path | None:
+    """H7: a data upgrade can't be rolled back by putting the old code back (it refuses company
+    files from newer code), so before this code upgrades anything it backs everything up once:
+    duracash-<time>-pre-upgrade-schema<N>.tar.gz, with the other backups. The marker file says which
+    schema the data was last opened with; a missing marker (data from before it, or just restored)
+    counts as older. Returns the backup made, or None when none was due. A failed backup raises:
+    the server doesn't upgrade data it couldn't back up first."""
+    log = log or (lambda msg: log_json("info", msg=msg))
+    want = {"schema": migrations.SCHEMA_VERSION, "auth_steps": len(migrations.AUTH_STEPS)}
+    try:
+        seen = json.loads(_marker_path().read_text())
+    except (OSError, ValueError):
+        seen = None
+    if isinstance(seen, dict) and int(seen.get("schema") or 0) > want["schema"]:
+        # Old code on newer data: Render's Rollback after a schema change (docs/runbooks.md, runbook 1).
+        msg = (f"the data was last opened with schema {seen.get('schema')} and this code knows up to {want['schema']}: "
+               "companies already upgraded won't open. Deploy the newer code again, or restore the pre-upgrade backup (runbook 2).")
+        log_json("error", msg=msg)
+        alerts.notify("schema:newer", msg)
+        return None
+    due = _has_data() and not (isinstance(seen, dict) and int(seen.get("schema") or 0) >= want["schema"]
+                               and int(seen.get("auth_steps") or 0) >= want["auth_steps"])
+    made = None
+    if due:
+        made = backup.make_backup(BACKUP_LOCKS, label=f"pre-upgrade-schema{want['schema']}")
+        log(f"backup before the data upgrade written: {made.name}")
+    storage.write_json(_marker_path(), want)
+    return made
+
+
+BACKUP_LOCKS = {"auth": auth.LOCK, "tokens": importer.TOKENS_LOCK, "deleted": _DELETED_LOCK, "qbo": qbo.LOCK}
+DRAIN_SECONDS = 20   # Render waits 30 seconds after SIGTERM before it stops the container
+
+
+def stop_on_sigterm(server: "Server") -> None:
+    """A deploy or restart sends SIGTERM (L4): stop taking new connections, let the requests already
+    running finish (Server.drain), then exit, rather than being cut off mid-save."""
+    import signal
+
+    def stop(signum, frame) -> None:
+        log_json("info", msg="SIGTERM: finishing the requests in progress, then stopping")
+        threading.Thread(target=server.shutdown, name="shutdown", daemon=True).start()
+
+    signal.signal(signal.SIGTERM, stop)
+
+
 def main() -> None:
     problems = config_problems()
     if problems:
         for problem in problems:
-            log_json("error", msg=f"Refusing to start in production: {problem}")
+            log_json("error", msg=f"Refusing to start ({env_name()}): {problem}")
+        sys.exit(1)
+    if production() and os.environ.get("DURACASH_ALLOW_NO_OFFSITE") == "1":
+        for problem in recovery_problems():
+            log_json("warn", msg=f"Starting anyway (DURACASH_ALLOW_NO_OFFSITE=1): {problem}")
+    try:
+        backup_before_upgrade()
+    except Exception as exc:
+        log_json("error", msg=f"Refusing to start: the backup before the data upgrade failed ({exc.__class__.__name__}: {exc}). "
+                              "Free disk space, or restore, and deploy again.")
+        alerts.notify("backup:pre-upgrade", "the backup before a data upgrade failed; the server did not start")
         sys.exit(1)
     auth.upgrade_file(migrations.AUTH_STEPS)
     if demo_enabled():
@@ -3751,12 +3837,13 @@ def main() -> None:
     print(f"Data directory: {storage.DATA_DIR}")
     if demo_enabled():
         print(f"Demo login: {auth.DEMO_EMAIL} / {auth.DEMO_PASSWORD}")
-    backup.start_scheduler(
-        {"auth": auth.LOCK, "tokens": importer.TOKENS_LOCK, "deleted": _DELETED_LOCK, "qbo": qbo.LOCK},
-        log=lambda msg: log_json("info", msg=msg),
-    )
+    backup.start_scheduler(BACKUP_LOCKS, log=lambda msg: log_json("info", msg=msg))
     monthly.start(SITE)
+    stop_on_sigterm(server)
     server.serve_forever()
+    left = server.drain(DRAIN_SECONDS)
+    server.server_close()
+    log_json("info" if not left else "warn", msg="stopped", unfinished_requests=left)
 
 
 if __name__ == "__main__":
