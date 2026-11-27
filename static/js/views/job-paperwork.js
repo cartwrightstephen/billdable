@@ -4,7 +4,7 @@
 import { unesc, fmtDate } from "../format.js";
 import { formErrorLine, refuseForm, formValues, field } from "../forms.js";
 import { formOpen } from "../state.js";
-import { post } from "../app-core.js";
+import { post, can } from "../app-core.js";
 import { paperworkHtml, paperworkValue, forgetPaperworkTicks } from "./clients.js";
 
 const WORDS = { client_type: "the client type", approver: "who signs off", ap_email: "email for pay apps", phone: "phone" };
@@ -35,7 +35,10 @@ function gateFieldsHtml(key, view) {
   if (!rows.length) return "";
   return `<fieldset class="span-2 gate-choices"><legend>Hard stop or check, on each pay app</legend>
     <p class="sub">Required: the pay app doesn't go without it, unless someone who can send pay apps overrides it with a reason. Check: whoever sends says it was checked or isn't needed, and it can go.</p>
-    ${rows.map(g => field({ form: key, name: `gate_${unesc(g.key)}`, id: `${key}-gate-${unesc(g.key)}`, label: unesc(g.label), value: unesc(g.gate),
+    ${rows.map(g => unesc(g.gate) === "hard" && !can("send_payapps")
+      // Making a hard stop a check takes the permission an override takes (the server refuses it).
+      ? `<p class="gate-fixed"><span>${g.label}</span> <span class="pill gate-hard">${GATE_WORDS.hard}</span> <span class="sub">Someone who can send pay apps can make it a check.</span></p>`
+      : field({ form: key, name: `gate_${unesc(g.key)}`, id: `${key}-gate-${unesc(g.key)}`, label: unesc(g.label), value: unesc(g.gate),
       options: [["hard", GATE_WORDS.hard], ["soft", GATE_WORDS.soft]] })).join("")}
   </fieldset>`;
 }

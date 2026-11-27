@@ -3547,7 +3547,11 @@ def record_missed_on(state: dict[str, Any], job: dict[str, Any], today: date) ->
 def cos_without_work(state: dict[str, Any], job: dict[str, Any]) -> list[dict[str, Any]]:
     """Signed change orders with no work recorded against them (Nov 26: approved work gets missed
     and never billed): no diary entry's change order work names it, no record is tied to it, its
-    schedule lines have nothing in the field, and no pay app has billed it."""
+    schedule lines have nothing in the field, and no pay app has billed it. A finished or closed job
+    is left alone, as record_missed_on does: its work is done (Hartline's Decatur addition, billed in
+    full on one lump-sum pay app, showed it; Nov 27 audit)."""
+    if job.get("closed") or job.get("work_status") == "complete":
+        return []
     ids = set(job.get("daily_records") or [])
     logged = {row.get("co_id") for r in state.get("daily_records", []) if r.get("id") in ids for row in (r.get("sections") or {}).get("co_work") or []}
     logged |= {r.get("co_id") for r in job.get("records", []) if r.get("co_id")}
@@ -5304,13 +5308,15 @@ def _gate_rows(job: dict[str, Any], labels: list[str]) -> list[dict[str, str]]:
     return rows
 
 
-def set_job_paperwork(state: dict[str, Any], job_id: str, body: dict[str, Any], actor: str = "owner") -> dict[str, Any]:
+def set_job_paperwork(state: dict[str, Any], job_id: str, body: dict[str, Any], actor: str = "owner",
+                      may_override: bool = True) -> dict[str, Any]:
     """Change the paperwork this job needs: {packet: the list, no_paperwork: true for nothing, or
     use_client: true for the client's list again}. It applies from the next pay app and to a draft
-    that hasn't been sent; a sent pay app stays as it went (B9). Audited."""
+    that hasn't been sent; a sent pay app stays as it went (B9). Audited. may_override: whoever
+    asks can send pay apps, as turning a hard stop into a check needs (Nov 27 audit)."""
     job = _open_job(state, job_id)
     if "gates" in body:
-        _set_paperwork_gates(state, job, body.get("gates"), actor)
+        _set_paperwork_gates(state, job, body.get("gates"), actor, may_override)
         if not any(k in body for k in ("packet", "no_paperwork", "use_client")):
             _refresh_draft_gate(job, state)
             return job   # only the gates changed
@@ -5350,12 +5356,16 @@ def set_job_paperwork(state: dict[str, Any], job_id: str, body: dict[str, Any], 
     return job
 
 
-def _set_paperwork_gates(state: dict[str, Any], job: dict[str, Any], gates: Any, actor: str) -> bool:
+def _set_paperwork_gates(state: dict[str, Any], job: dict[str, Any], gates: Any, actor: str, may_override: bool = True) -> bool:
     """{key: "hard" | "soft"} for this job's documents (gate_key). Applies at once to a draft that
-    hasn't been sent, and to every pay app from here; a sent one stays as it went. Audited."""
+    hasn't been sent, and to every pay app from here; a sent one stays as it went. Audited.
+    Making a hard stop a check lets a pay app go without that document, so it takes the same
+    permission as overriding one (OVERRIDE_PERM); making a check a hard stop takes none."""
     if not isinstance(gates, dict) or len(gates) > 40 or any(not isinstance(k, str) or len(k) > 40 or v not in GATES for k, v in gates.items()):
         _refuse("Gates not saved.", {"gates": "Set each document to Required (hard stop) or Check (soft)."})
     now = dict(job.get("paperwork_gates") or {})
+    if not may_override and any(gate == "soft" and (now.get(key) or default_gate(key)) == "hard" for key, gate in gates.items()):
+        raise GateError(OVERRIDE_PERM, fields={"gates": OVERRIDE_PERM})
     changed = []
     for key, gate in gates.items():
         was = now.get(key) or default_gate(key)

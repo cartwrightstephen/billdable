@@ -4607,7 +4607,8 @@ JOB_ACTIONS = {
         _text(c.body, "stage", "final"), c.actor, period_end=_text(c.body, "period_to"), notes=_text(c.body, "notes"))),
     # Dismiss a Dashboard reminder (Nov 26): no job record that day, a change order with no work.
     "dismiss-row": (False, lambda h, st, j, i, c: domain.dismiss_row(st, j, _text(c.body, "key"), c.actor)),
-    "paperwork": (False, lambda h, st, j, i, c: domain.set_job_paperwork(st, j, c.body, c.actor)),
+    "paperwork": (False, lambda h, st, j, i, c: domain.set_job_paperwork(st, j, c.body, c.actor,
+                                                                         may_override=profiles.has_perm(c.user, "send_payapps", st))),
     "delete": (False, lambda h, st, j, i, c: domain.delete_job(st, j, c.actor)),
     # The New job record form: the Diary and the day's details, and each document section (T11, T12, M1).
     # A quantity past what its line has left asks first (gate_over; over_ok records it anyway, Nov 26).

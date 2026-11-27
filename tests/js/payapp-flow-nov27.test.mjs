@@ -64,6 +64,17 @@ test("the job's supporting documents say which are hard stops and which are chec
   assert.match(html, /id="jobpaperwork-j1-gate-photo"/);
   assert.match(html, /<option value="soft" selected>Check \(soft\)<\/option>/);
   assert.deepEqual(jobPaperwork.gateValues({ gate_photo: "hard", gate_waiver: "soft", packet_other: "x", gate_x: "maybe" }), { photo: "hard", waiver: "soft" });
+  assert.match(html, /id="jobpaperwork-j1-gate-contract"/, "an owner can make a hard stop a check");
+  // Without Send pay apps, a hard stop stays one here (the server refuses it too; Nov 27 audit);
+  // a check can still be made a hard stop.
+  page.setMe({ name: "Jo", company_id: "co-p", role: "member", perms: ["manage_jobs"] });
+  page.formOpen["jobpaperwork-j1"] = true;
+  const theirs = jobPaperwork.jobPaperworkHtml(job({ paperwork_view: view }));
+  page.formOpen["jobpaperwork-j1"] = false;
+  assert.doesNotMatch(theirs, /id="jobpaperwork-j1-gate-contract"/);
+  assert.match(theirs, /Signed contract<\/span> <span class="pill gate-hard">Required \(hard stop\)<\/span> <span class="sub">Someone who can send pay apps can make it a check/);
+  assert.match(theirs, /id="jobpaperwork-j1-gate-photo"/);
+  page.setMe({ name: "Pat", company_id: "co-p", role: "owner" });
 });
 
 test("Progress pay app has its own page, with the pay period's quantities", async () => {
