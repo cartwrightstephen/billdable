@@ -4864,6 +4864,8 @@ def void_draft(state: dict[str, Any], job_id: str, actor: str = "owner") -> dict
             f"\n\n{sign_off(state, actor)}"
         )
         _record_email(state, job_id, "pay_app_withdrawn", _send_to(payer), subject, body, actor, cc=_copy_list(payer))
+        if _qbo_left_open(draft):
+            audit(state, job_id, "void_draft", f"{draft['number']} was withdrawn.{_qbo_left_open(draft)}", actor)
     if job.get("work_status") != "complete" and not sov.has_sov(job):
         job["completed_value_cents"] = _billed_gross(job)
     carried = {line.get("co_id") for line in draft.get("lines", []) if line.get("co_id")}
@@ -4875,6 +4877,16 @@ def void_draft(state: dict[str, Any], job_id: str, actor: str = "owner") -> dict
     _back_to_suggested(job)
     _pencil_status_goes(job)
     return job
+
+
+def _qbo_left_open(invoice: dict[str, Any]) -> str:
+    """What to say about a pay app's QuickBooks invoice when the pay app is withdrawn: Duracash
+    doesn't void it there, so the books would go on showing it owed."""
+    kept = invoice.get("qbo") or {}
+    if not kept.get("invoice_id"):
+        return ""
+    return (f" QuickBooks invoice {kept.get('doc_number') or kept['invoice_id']} still shows {money(int(kept.get('total_cents') or 0))}:"
+            " void it in QuickBooks.")
 
 
 def _back_to_suggested(job: dict[str, Any]) -> None:
@@ -4947,7 +4959,8 @@ def void_sent_pay_app(state: dict[str, Any], job_id: str, invoice_id: str, reaso
         f"\n\n{sign_off(state, actor)}"
     )
     _record_email(state, job_id, "pay_app_withdrawn", to, subject, body, actor, cc=_copy_list(payer))
-    audit(state, job_id, "void_sent", f"{actor} pulled back {invoice['number']} ({money(invoice['amount_cents'])}): {reason}.", actor)
+    audit(state, job_id, "void_sent", f"{actor} pulled back {invoice['number']} ({money(invoice['amount_cents'])}): {reason}."
+          + _qbo_left_open(invoice), actor)
     _settlements_follow(state, job, f"{invoice['number']} was pulled back")
     return job
 

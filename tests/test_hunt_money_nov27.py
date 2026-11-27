@@ -143,5 +143,18 @@ class DeleteRevisedDraftTests(unittest.TestCase):
         self.assertEqual(next(i for i in job["invoices"] if i["status"] in domain.DRAFT_STATUSES)["number"], "PA-PINE-01")
 
 
+
+class WithdrawnQuickBooksInvoiceTests(unittest.TestCase):
+    def test_pull_back_says_the_quickbooks_invoice_is_still_open(self):
+        """A pay app sent to QuickBooks and then pulled back left its invoice open there, with nothing
+        saying so: the books showed it owed and the corrected pay app went in beside it."""
+        state, job, labor, _materials = schedule_job(retainage=10)
+        domain.record_sov_progress(state, job["id"], {labor: "0.5"})
+        inv = send(state, job)
+        inv["qbo"] = {"invoice_id": "130", "doc_number": "PA-PINE-01", "total_cents": inv["amount_cents"]}
+        domain.void_sent_pay_app(state, job["id"], inv["id"], "Wrong quantity")
+        self.assertIn("QuickBooks invoice PA-PINE-01 still shows $4,500.00", " ".join(str(a) for a in state["audit"][-3:]))
+
+
 if __name__ == "__main__":
     unittest.main()
