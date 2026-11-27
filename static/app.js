@@ -222,7 +222,7 @@ function render() {
   }
   if (["inbox", "calendar", "outbox"].includes(currentView)) loadImportSettings();
   loadReminders();
-  if (currentView === "dashboard" && hasResults(state) && (!metricsData || metricsData.period !== metricsPeriod)) loadMetrics();
+  if (currentView === "dashboard" && hasResults(state) && can("financials") && (!metricsData || metricsData.period !== metricsPeriod)) loadMetrics();
   if (currentView === "company" && !qboStatus) loadQboStatus();
   if (currentView === "financials" && can("financials")) loadFinancials();
   if (sovDraft) updateSovTotals();

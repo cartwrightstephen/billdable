@@ -8,7 +8,7 @@ import { checkFields } from "../validate.js";
 import { readJson } from "../net.js";
 import { pathFor } from "../routes.js";
 import { state, me, formOpen, onSessionEnd } from "../state.js";
-import { post, render, emptyState, can, nav, moreDetails } from "../app-core.js";
+import { post, render, emptyState, can, nav, moreDetails, fileLink } from "../app-core.js";
 import { approverBoxes, approverIds, approverNames, ownersLine, forgetApprovers } from "../approvers.js";
 import { sameCustomerBox, showSameCustomer, hideSameCustomer, keptNames, deletePayerHtml, payerJobCount, contractImportHtml, contractMark, forgetClosedContract } from "./jobs.js";
 
@@ -104,7 +104,7 @@ function loadClientJobs(id) {
 function jobRow(j) {
   return `<li class="client-job"><a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a>
     <span class="sub">${j.code}${j.contract_number ? ` · Contract ${j.contract_number}` : ""} · ${money(j.contract_total_cents)} · ${j.closed ? "Finished" : "Open"}</span>
-    ${j.contract_file_id ? `<a href="/api/files/${j.contract_file_id}" target="_blank" rel="noopener">Contract</a>` : ""}
+    ${j.contract_file_id ? fileLink(j.contract_file_id, "Contract") : ""}
     ${j.closed ? "" : `<button class="linkish" data-action="pick-files" data-job="${j.id}" data-kind="contract">Add contract</button>`}</li>`;
 }
 

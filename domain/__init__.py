@@ -125,6 +125,9 @@ def _refuse(message: str, fields: dict[str, str]) -> None:
         raise GateError(next(iter(fields.values())) if len(fields) == 1 else message, fields=fields)
 
 
+PARSE_INT_LIMIT = 10 ** 15   # $10 trillion in cents, or a quantity no job has
+
+
 def parse_int(value: Any, label: str, field: str, default: int | None = None) -> int:
     """A whole number from a request: a JSON number or a string of digits. Blank gives `default`
     (or asks for the value when there is none); anything else is refused under the field.
@@ -134,13 +137,20 @@ def parse_int(value: Any, label: str, field: str, default: int | None = None) ->
         if default is None:
             raise GateError(f"Enter {label}.", fields={field: f"Enter {label}."})
         return default
-    if isinstance(value, float) and value == value and value not in (float("inf"), float("-inf")):
+    if isinstance(value, float) and value == value and abs(value) < PARSE_INT_LIMIT:
         return int(round(value))
+    # A number past any real amount (a request with thousands of digits) is refused, not computed with (L4).
     if isinstance(value, int) and not isinstance(value, bool):
-        return value
-    if isinstance(value, str) and value.strip().lstrip("-").isdigit():
-        return int(value.strip())
-    raise GateError(f"Enter {label} as a number.", fields={field: f"Enter {label} as a number."})
+        if abs(value) < PARSE_INT_LIMIT:
+            return value
+    elif isinstance(value, str) and value.strip().lstrip("-").isdigit():
+        if len(value.strip().lstrip("-")) <= len(str(PARSE_INT_LIMIT)):
+            number = int(value.strip())
+            if abs(number) < PARSE_INT_LIMIT:
+                return number
+    else:
+        raise GateError(f"Enter {label} as a number.", fields={field: f"Enter {label} as a number."})
+    raise GateError(f"{label[:1].upper()}{label[1:]} is too large.", fields={field: f"{label[:1].upper()}{label[1:]} is too large."})
 
 
 def job_money(job: dict[str, Any]) -> dict[str, int]:
@@ -3000,6 +3010,13 @@ def light_snapshot(state: dict[str, Any], now: datetime | None = None, perms: li
         jobs.append(view)
         full.append(view)
     out["jobs"] = jobs
+    # Which files take "See payroll and sensitive documents" to open (H2): the page shows their
+    # names without a link to those who don't hold it. The server refuses them either way.
+    from domain import profiles
+    sensitive = profiles.sensitive_file_ids(state)
+    for meta in out.get("files") or []:
+        if isinstance(meta, dict) and meta.get("id") in sensitive:
+            meta["sensitive"] = True
     # "First pay app to this payer" must not depend on which jobs were sent.
     sent = {j["payer_id"] for j in state["jobs"] if any(i.get("sent_at") for i in j.get("invoices", []))}
     timings = payer_timing(state)

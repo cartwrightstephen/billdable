@@ -1202,11 +1202,21 @@ def hand_over_admin(company_id: str, actor_id: str, to_id: str, password: Any) -
 
 
 def check_password(user_id: str, password: Any) -> bool:
+    """The signed-in person's password, asked again before something that can't be undone (delete,
+    reset, two-step). Counted with the sign-in throttle (M2): a session left open can't be used to
+    guess the password at full speed. Raises RateLimited while this account must wait."""
+    now = time.monotonic()
     with LOCK:
         user = next((u for u in _load()["users"] if u["id"] == user_id), None)
-    if not user or not isinstance(password, str):
-        return False
-    return _matches(user, password)
+        if not user:
+            return False
+        _throttle(user["email"], None, now)
+        _failed(user["email"], None, now)
+    ok = isinstance(password, str) and _matches(user, password)
+    if ok:
+        with LOCK:
+            _not_failed(user["email"], None, now)
+    return ok
 
 
 def delete_company_users(company_id: str) -> int:
@@ -1244,8 +1254,11 @@ def _user(data: dict[str, Any], user_id: str) -> dict[str, Any]:
     return user
 
 
-def totp_begin(user_id: str) -> dict[str, str]:
-    """A new key, not yet in force: it starts working once a code from it is confirmed."""
+def totp_begin(user_id: str, password: Any = None) -> dict[str, str]:
+    """A new key, not yet in force: it starts working once a code from it is confirmed. Takes the
+    password (M2): a session left open must not be enough to put someone else's phone on the account."""
+    if not check_password(user_id, password):
+        raise AuthError("Password is wrong.")
     with LOCK:
         data = _load()
         user = _user(data, user_id)
@@ -1350,6 +1363,24 @@ def device_known(user_id: str, raw: Any) -> bool:
         user = next((u for u in _read()["users"] if u["id"] == user_id), None)
         expires = ((user or {}).get("devices") or {}).get(_digest(raw), "")
     return expires > _iso(_utcnow())
+
+
+def totp_reset(email: str) -> dict[str, Any]:
+    """Founder support (admin.py two-step-off, M2): someone who lost the phone and the recovery codes.
+    Turns the authenticator app off, ends every session and forgets remembered browsers, so the
+    next sign-in asks for the password and, where mail is set up, an emailed code. Check who is
+    asking first (docs/runbooks.md, runbook 3a)."""
+    with LOCK:
+        data = _load()
+        user = next((u for u in data["users"] if u["email"] == str(email or "").strip().lower()), None)
+        if not user:
+            raise AuthError("No account with that email.")
+        for key in ("totp_secret", "totp_enabled", "totp_last", "totp_recovery", "totp_pending"):
+            user.pop(key, None)
+        user.pop("devices", None)
+        data["sessions"] = {k: v for k, v in data["sessions"].items() if v.get("user_id") != user["id"]}
+        _save(data)
+        return _public(user)
 
 
 def totp_disable(user_id: str, password: Any, code: Any) -> None:

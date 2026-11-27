@@ -6,7 +6,7 @@ import { draftValue, clearForm } from "../forms.js";
 import { askConfirm } from "../dom.js";
 import { termText } from "../terms.js";
 import { state, onSessionEnd } from "../state.js";
-import { post, toast, render, nav } from "../app-core.js";
+import { post, toast, render, nav, fileLink } from "../app-core.js";
 
 
 // A record on the job page, with Edit for its label, kind and what a conversation or note says
@@ -37,7 +37,7 @@ function recordRow(j, stored) {
   // One row per file (Round 1, item 13): a record with one file is its link; with several, the
   // links follow on the same line; where it came from and the date close the line.
   const files = recordFileList(r);
-  const label = files.length === 1 ? `<a href="/api/files/${files[0].id}" target="_blank" rel="noopener">${r.label}</a>` : r.label;
+  const label = files.length === 1 ? fileLink(files[0].id, r.label) : r.label;
   const when = r.source || r.added_at || r.on_date ? ` <span class="sub">${r.source ? r.source + " · " : ""}${fmtDate(r.on_date || r.added_at)}</span>` : "";
   return `<div class="list-item record-line"><span class="pill">${termText(recordKindWord(r))}</span> ${label}${files.length > 1 ? ` <span class="sub">${recordFiles(r)}</span>` : ""}${r.note ? ` <span class="sub">— ${r.note.length > 240 ? r.note.slice(0, 240) + "…" : r.note}</span>` : ""}${when}${j.closed ? "" : ` <button class="linkish tall" data-action="record-edit" data-item="${r.id}" aria-label="Edit ${r.label}">Edit</button>`}${(r.quantities || []).length && !j.closed && j.work_status !== "complete" ? ` <button class="linkish" data-action="quantities-undo" data-id="${j.id}" data-item="${r.id}" aria-label="Undo import: ${r.label}">Undo import</button>` : ""}${r.quantities_undone ? `<div class="sub">Quantities taken off by ${r.quantities_undone.by}, ${fmtDate(r.quantities_undone.at)}</div>` : ""}</div>`;
 }
@@ -61,7 +61,7 @@ export function recordSummary(j) {
 export function recordFiles(r) {
   return (r.file_ids || []).map(fid => {
     const f = (state.files || []).find(x => x.id === fid);
-    return f ? `<a href="/api/files/${f.id}" target="_blank" rel="noopener">${f.name}</a>` : "";
+    return f ? fileLink(f.id, f.name) : "";
   }).filter(Boolean).join(" · ");
 }
 

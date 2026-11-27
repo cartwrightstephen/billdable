@@ -488,6 +488,24 @@ export function can(perm) {
 
 export function may(action) { return mayTake(action, perms()); }
 
+// Payroll, time sheets, lien waivers and contracts (H2): the server marks those files sensitive in
+// state.files and refuses them to anyone without "See payroll and sensitive documents", so for
+// them the page shows the name without a link.
+export function mayOpenFile(id) {
+  if (can("sensitive_docs")) return true;
+  const f = ((state && state.files) || []).find(x => x.id === id);
+  return !(f && f.sensitive);
+}
+export const LOCKED_FILE_WORDS = "Your permissions don't include See payroll and sensitive documents.";
+export function lockedFile(text) {
+  return `<span class="locked-file" title="${LOCKED_FILE_WORDS}">${text} <span class="sub">(private)</span></span>`;
+}
+// A link to a stored file, or its name only when this person may not open it. `cls` is a class
+// for the link; `inner` defaults to the text.
+export function fileLink(id, text, cls = "", inner = text) {
+  return mayOpenFile(id) ? `<a${cls ? ` class="${cls}"` : ""} href="/api/files/${id}" target="_blank" rel="noopener">${inner}</a>` : lockedFile(text);
+}
+
 // Redraw one part of the page (a card, a list) in place, without redrawing the view around it.
 export function patch(selector, html) {
   const el = document.querySelector(selector);

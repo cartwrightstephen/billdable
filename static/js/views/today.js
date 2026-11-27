@@ -276,7 +276,8 @@ function filteredJobs() {
 // the value it delivers); its line says the figure people ask for, sent to paid.
 export function hasResults(st) { return !!((st.jobs || []).length || st.closed_jobs_total); }
 function resultsHtml() {
-  if (!hasResults(state)) return "";
+  // The figures come from /api/metrics, which takes "See company financials" (L1).
+  if (!hasResults(state) || !can("financials")) return "";
   const f = (key, label) => `<button class="${metricsPeriod === key ? "btn" : "btn secondary"} small" data-action="metrics-period" data-period="${key}" aria-pressed="${metricsPeriod === key}">${label}</button>`;
   const ready = metricsData && metricsData.period === metricsPeriod;
   const m = ready ? metricsData.data : null;

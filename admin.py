@@ -11,21 +11,76 @@
     python3 admin.py partner COMPANY_ID on|off     a design partner pays STRIPE_PARTNER_PRICE_ID
                                                    (the business plan: up to 3, $99 a month)
     python3 admin.py migrate-all                   bring every company file to the current schema now
-                                                   (each is also brought up to date the first time it is read)
+                                                   (each is also brought up to date the first time it is read;
+                                                   a backup is made first when the schema is new, H7)
+    python3 admin.py two-step-off EMAIL            turn the authenticator app off for someone who lost the
+                                                   phone and the recovery codes (asks to confirm; runbook 3a)
+    python3 admin.py health                        what /healthz checks, with the details it doesn't show
+                                                   the public: disk, email, backups, alerts
+    python3 admin.py log [N]                       the last N (default 20) lines of the admin log
 
 Every command acts on DURACASH_DATA_DIR, like the server. See docs/runbooks.md.
+
+Every command run is written to <data dir>/admin_log.jsonl (M11): when, which command, on which
+company, who ran it (the shell's user name) and how it ended. The file is only ever appended to;
+an email is kept as a short hash, never the address. A command that changes something also posts
+an alert to ALERT_WEBHOOK_URL, so the other founder hears of it.
 """
 
 from __future__ import annotations
 
+import getpass
+import hashlib
 import json
 import sys
+from datetime import datetime, timezone
 
+import alerts
 import auth
 import domain
 import migrations
 import monthly
 import server
+import storage
+
+# The commands that change something: each is logged and alerted. The others are only logged.
+CHANGES = {"delete-company", "end-sessions", "monthly-summaries", "read-only", "writable", "partner", "migrate-all", "two-step-off"}
+EMAIL_ARGS = {"find", "two-step-off"}
+
+
+def log_path():
+    return storage.DATA_DIR / "admin_log.jsonl"
+
+
+def _who() -> str:
+    try:
+        return getpass.getuser()
+    except Exception:  # no user name in the container's environment
+        return "unknown"
+
+
+def _target(cmd: str, args: list[str]) -> str:
+    if not args:
+        return ""
+    if cmd in EMAIL_ARGS:
+        return "email:" + hashlib.sha256(args[0].strip().lower().encode()).hexdigest()[:12]
+    return args[0][:80]
+
+
+def record(cmd: str, args: list[str], result: int) -> dict:
+    """Append one line to the admin log; alert for a change (M11). Never raises: a log that can't be
+    written is said on the screen, and the command has already run."""
+    entry = {"t": datetime.now(timezone.utc).isoformat(timespec="seconds"), "command": cmd, "target": _target(cmd, args),
+             "by": _who(), "result": "ok" if result == 0 else f"exit {result}"}
+    try:
+        log_path().parent.mkdir(parents=True, exist_ok=True)
+        with open(log_path(), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except OSError as exc:
+        print(f"Note: the admin log couldn't be written ({exc}).")
+    if cmd in CHANGES and result == 0:
+        alerts.notify(f"admin:{cmd}:{entry['target']}", f"admin.py {cmd} {entry['target']} run by {entry['by']}".strip(), send=alerts._post)
+    return entry
 
 
 def _companies() -> list[dict]:
@@ -43,6 +98,16 @@ def main(argv: list[str]) -> int:
         print(__doc__)
         return 2
     cmd, args = argv[1], argv[2:]
+    result = 2
+    try:
+        result = _run(cmd, args)
+    finally:
+        if cmd != "log":
+            record(cmd, args, result)
+    return result
+
+
+def _run(cmd: str, args: list[str]) -> int:
     if cmd == "companies":
         for c in _companies():
             print(f"{c['id']}  {c['name']}  users={c['users']}  jobs={c['jobs']}")
@@ -106,7 +171,41 @@ def main(argv: list[str]) -> int:
                          f"Duracash set the company read-only: {reason}." if reason else "Duracash made the company writable again.", "Duracash")
             server.save_company(args[0], state)
         print(f"{args[0]} is now {'read-only: ' + reason if reason else 'writable'}.")
+    elif cmd == "health":
+        details = server.health_details()
+        for key, value in details.items():
+            print(f"{key}: {value}")
+        for problem in server.recovery_problems() if server.production() else []:
+            print(f"PROBLEM: {problem}")
+        return 0 if details["ok"] else 1
+    elif cmd == "log":
+        try:
+            lines = log_path().read_text(encoding="utf-8").splitlines()
+        except OSError:
+            lines = []
+        for line in lines[-(int(args[0]) if args and args[0].isdigit() else 20):]:
+            print(line)
+    elif cmd == "two-step-off" and args:
+        user = auth.user_by_email(args[0])
+        if not user:
+            print("No account with that email.")
+            return 1
+        typed = input(f"Turn two-step sign-in off for {user['email']} and sign them out everywhere? "
+                      "Check who is asking first (runbook 3a). Type the email to confirm: ")
+        if typed.strip().lower() != user["email"]:
+            print("Nothing changed.")
+            return 1
+        auth.totp_reset(user["email"])
+        with server.company_lock(user["company_id"]):
+            state = server.load_company(user["company_id"])
+            domain.audit(state, "", "team", f"Duracash turned the authenticator app off for {user.get('name') or user['email']} at their request.", "Duracash")
+            server.save_company(user["company_id"], state)
+        print(f"Two-step sign-in with the app is off for {user['email']}, and every session ended. "
+              "They sign in with the password (and an emailed code where mail is set up) and can set the app up again.")
     elif cmd == "migrate-all":
+        made = server.backup_before_upgrade(log=print)
+        if made:
+            print(f"Backed up first: {made}")
         ids = server.company_ids()
         updated, refused = 0, []
         for company_id in ids:

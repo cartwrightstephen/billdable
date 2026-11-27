@@ -4,7 +4,7 @@ The server makes one on start-up if the newest is older than BACKUP_HOURS,
 then every BACKUP_HOURS (default 24; 0 turns it off). Each backup is a
 .tar.gz in <data dir>/backups holding auth.json, every company file, the
 inbound tokens, the helper files, the mail counter, the list of deleted
-companies, the QuickBooks connections, the monthly and daily job records
+companies, the monthly and daily job records
 (R6-06) and (unless BACKUP_UPLOADS=0) the uploaded files. The newest
 BACKUP_KEEP (default 14) are kept.
 
@@ -46,10 +46,14 @@ import store
 
 # Files at the top of the data directory that a backup holds and a restore puts back. Each is
 # small and guarded by its own lock, if any (the key in make_backup's `locks`).
+# QuickBooks tokens (qbo_connections.json) are left out on purpose (H4): a backup would keep a
+# deleted company's live tokens for as long as it is kept. After a restore, owners connect again.
 TOP_FILES = (("auth.json", "auth"), ("inbound_tokens.json", "tokens"), ("helper_answers.json", None), ("helper_log.json", None),
-             ("mail_sends.json", None), ("deleted_companies.json", "deleted"), ("qbo_connections.json", "qbo"),
+             ("mail_sends.json", None), ("deleted_companies.json", "deleted"),
              ("monthly_jobs.json", None), ("daily_jobs.json", None))
 TOP_NAMES = tuple(name for name, _ in TOP_FILES)
+# In backups made before that: read past, never put back.
+LEFT_BEHIND = ("qbo_connections.json",)
 
 PREFIX = "duracash-"
 OLD_PREFIX = "billdable-"  # backups made before the rename to Duracash
@@ -89,12 +93,13 @@ def newest_time() -> str | None:
     return datetime.fromtimestamp(found[0].stat().st_mtime, timezone.utc).isoformat(timespec="seconds")
 
 
-def make_backup(locks: dict[str, Any] | None = None, uploads: bool | None = None, into: Path | None = None) -> Path:
+def make_backup(locks: dict[str, Any] | None = None, uploads: bool | None = None, into: Path | None = None, label: str = "") -> Path:
     """Write one backup. JSON files are read under the lock that guards them, one lock at a time
     (never nested, so a backup can't deadlock with a request); company files are replaced whole
     by a rename and the SQLite database is copied with its own backup API, so neither needs a
     lock; uploads never change once written. `uploads` overrides BACKUP_UPLOADS; `into` writes
-    it to another folder, outside the rotation (the off-site copy with uploads)."""
+    it to another folder, outside the rotation (the off-site copy with uploads); `label` goes on the
+    end of the name (the backup made before a data upgrade, H7)."""
     locks = locks or {}
     with_uploads = bool(settings()["uploads"]) if uploads is None else uploads
     data_dir = Path(storage.DATA_DIR)
@@ -121,7 +126,7 @@ def make_backup(locks: dict[str, Any] | None = None, uploads: bool | None = None
         target = into or folder()
         target.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-        final = target / f"{PREFIX}{stamp}{SUFFIX}"
+        final = target / f"{PREFIX}{stamp}{'-' + label if label else ''}{SUFFIX}"
         tmp = target / f".{final.name}.tmp"
         with tarfile.open(tmp, "w:gz") as tar:
             for rel, data in members:
@@ -176,13 +181,14 @@ def rotate() -> list[Path]:
 
 def _safe_members(tar: tarfile.TarFile) -> list[tarfile.TarInfo]:
     """Only plain files at relative paths inside the data directory."""
-    allowed_top = {*TOP_NAMES, UPLOADS_LEFT_OUT, "companies", "uploads"}
+    allowed_top = {*TOP_NAMES, *LEFT_BEHIND, UPLOADS_LEFT_OUT, "companies", "uploads"}
     out = []
     for m in tar.getmembers():
         parts = Path(m.name).parts
         if not m.isfile() or not parts or m.name.startswith("/") or ".." in parts or parts[0] not in allowed_top:
             raise ValueError(f"Refusing to restore {m.name!r}: not a Duracash backup member.")
-        out.append(m)
+        if m.name not in LEFT_BEHIND:
+            out.append(m)
     return out
 
 
@@ -216,8 +222,8 @@ def restore(path: str | Path) -> Path:
     aside = data_dir / f"pre-restore-{stamp}"
     aside.mkdir(parents=True)
     # Everything a backup holds is moved aside, even what this (perhaps older) backup lacks:
-    # a list of deleted companies or QuickBooks connections newer than the backup must not
-    # stay to contradict the data put back (R6-06).
+    # a list of deleted companies newer than the backup must not stay to contradict the data put
+    # back (R6-06). The QuickBooks connections stay as they are: backups never hold them (H4).
     # A backup made without the uploads leaves the ones on the disk in place: files never change
     # once written, so they are what the restored records point to (the off-site copy has them too).
     left_out = (staging / UPLOADS_LEFT_OUT).exists()
@@ -228,6 +234,9 @@ def restore(path: str | Path) -> Path:
     for item in staging.iterdir():
         shutil.move(str(item), str(data_dir / item.name))
     staging.rmdir()
+    # Which schema the data was last opened with (server.backup_before_upgrade) is no longer known:
+    # the next start backs the restored data up again before it upgrades anything (H7).
+    (data_dir / "schema_version.json").unlink(missing_ok=True)
     return aside
 
 

@@ -274,11 +274,18 @@ def _round1_manage_jobs(state: dict[str, Any]) -> None:
     profiles.grant_manage_jobs(state)
 
 
+def _sec_sensitive_docs(state: dict[str, Any]) -> None:
+    """Security review, Nov 26 (H2): the new "See payroll and sensitive documents" permission goes
+    to the custom profiles that do the office's paperwork (domain/profiles.py grant_sensitive_docs).
+    Idempotent."""
+    profiles.grant_sensitive_docs(state)
+
+
 STEPS: list[Callable[[dict[str, Any]], None]] = [_v1_to_v2, _v2_to_v3, _v3_to_v4, _tasks_daily_lists, _payapps_cos_co_history,
                                                    _paperwork_insurance_records, _jobs_clients_address_parts,
                                                    _settings_auth_company_address_parts, _settings_auth_permission_profiles,
                                                    _followups_paperwork_catalog_labels, _review_oct30_money_waivers,
-                                                   _review_oct30_waiver_repair, _round1_manage_jobs]
+                                                   _review_oct30_waiver_repair, _round1_manage_jobs, _sec_sensitive_docs]
 
 
 # ----- steps for auth.json (the accounts file), run once at start-up by auth.upgrade_file -----

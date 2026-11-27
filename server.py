@@ -193,9 +193,23 @@ def app_url() -> str | None:
     return url if re.match(r"^https?://[^\s/]+", url) else None
 
 
+ENVIRONMENTS = ("production", "staging", "development")
+
+
+def env_name() -> str:
+    """DURACASH_ENV as the server reads it: production, staging or development (H6). Unset is
+    development, which is what a laptop or a test runs as. Anything else (a typo, "prod") is
+    "unknown", and the server refuses to start with it (config_problems), as it does with an unset
+    value on Render, where a missing setting must never mean the lenient development rules."""
+    value = (os.environ.get("DURACASH_ENV") or "").strip().lower()
+    if not value:
+        return "development"
+    return value if value in ENVIRONMENTS else "unknown"
+
+
 def production() -> bool:
     """DURACASH_ENV=production: no demo tenant, and startup refuses a half-set configuration."""
-    return (os.environ.get("DURACASH_ENV") or "").strip().lower() == "production"
+    return env_name() == "production"
 
 
 def demo_mode() -> str:
@@ -258,8 +272,19 @@ def data_notice() -> bool:
     return os.environ.get("DURACASH_DATA_PERSISTENT") != "1"
 
 
+def on_render() -> bool:
+    """Render sets RENDER=true in every service's environment."""
+    return bool((os.environ.get("RENDER") or "").strip())
+
+
 def config_problems() -> list[str]:
-    """What stops a production start. Empty outside production."""
+    """What stops a start: a DURACASH_ENV the server doesn't know, an unset one on Render (H6), and
+    in production a half-set configuration. Empty in development and staging."""
+    raw = (os.environ.get("DURACASH_ENV") or "").strip()
+    if env_name() == "unknown":
+        return [f"DURACASH_ENV is {raw!r}; it must be production, staging or development."]
+    if not raw and on_render():
+        return ["DURACASH_ENV is not set. On Render set it to production or staging."]
     if not production():
         return []
     problems = []
@@ -272,7 +297,53 @@ def config_problems() -> list[str]:
     url = app_url()
     if not url or not url.startswith("https://"):
         problems.append("DURACASH_URL must be the site's https:// address, so emailed links work.")
+    # Off-site backups and crash alerts (H1): without them a lost disk loses every company, and a
+    # crash or failed backup goes unseen. DURACASH_ALLOW_NO_OFFSITE=1 starts anyway, logged on
+    # every start (main), for a deploy that has to come up before they are set.
+    if os.environ.get("DURACASH_ALLOW_NO_OFFSITE") != "1":
+        problems.extend(recovery_problems())
     return problems
+
+
+def recovery_problems() -> list[str]:
+    """What production lacks for recovering from a lost disk and hearing about trouble (H1)."""
+    problems = []
+    if not offsite.configured():
+        problems.append("Off-site backups are not set up: set BACKUP_S3_ENDPOINT, BACKUP_S3_BUCKET, BACKUP_S3_REGION, "
+                        "BACKUP_S3_KEY_ID and BACKUP_S3_SECRET (README.md, Settings).")
+    if not offsite.settings()["recipient"]:
+        problems.append("BACKUP_AGE_RECIPIENT is not set, so off-site backups can't be encrypted.")
+    if not alerts.url():
+        problems.append("ALERT_WEBHOOK_URL is not set (an https:// incoming webhook), so crashes and failed backups go unseen.")
+    return problems
+
+
+def health_details() -> dict:
+    """What /healthz checks, with the details it no longer shows the public (admin.py health)."""
+    writable = True
+    try:
+        probe = storage.DATA_DIR / f".health-{secrets.token_hex(4)}"
+        storage.DATA_DIR.mkdir(parents=True, exist_ok=True)
+        probe.write_text("ok")
+        probe.unlink()
+    except OSError:
+        writable = False
+    try:
+        free_mb = shutil.disk_usage(storage.DATA_DIR).free // (1024 * 1024)
+    except OSError:
+        free_mb = None
+    roomy = free_mb is None or free_mb >= DISK_FREE_MIN_MB
+    ok = writable and roomy
+    return {
+        "ok": ok,
+        "storage": "ok" if ok else "not writable" if not writable else f"under {DISK_FREE_MIN_MB} MB free",
+        "disk_free_mb": free_mb,
+        "email": "configured" if mailer.configured() else "not set up",
+        "last_backup": backup.newest_time(),
+        "offsite_backup": offsite.last_upload() if offsite.configured() else "not set up",
+        "alerts": "configured" if alerts.url() else "not set up",
+        "env": env_name(),
+    }
 
 
 SECRET_PATHS = (
@@ -301,11 +372,27 @@ _LIMITS_LOCK = threading.Lock()
 
 
 def trusted_proxy_hops() -> int:
-    """How many proxies in front of the server add to X-Forwarded-For (R6-05). Render has one."""
+    """How many proxies in front of the server add to X-Forwarded-For (R6-05): the setting
+    TRUSTED_PROXY_HOPS, 1 (Render's) by default. The first request's header shape is logged (M10)."""
     try:
         return max(0, int(os.environ.get("TRUSTED_PROXY_HOPS", "1")))
     except ValueError:
         return 1
+
+
+_FORWARDED_LOGGED = threading.Event()
+
+
+def _note_forwarded_shape(entries: int, hops: int) -> None:
+    """M10: once per start, the shape of the first X-Forwarded-For seen from a caller, so the
+    founders can check TRUSTED_PROXY_HOPS against what Render really sends: how many entries it
+    had, never the addresses (the log carries no network addresses). With fewer entries than
+    hops, every caller would share one rate limit: that is logged as a warning."""
+    if entries == 0 or _FORWARDED_LOGGED.is_set():
+        return
+    _FORWARDED_LOGGED.set()
+    log_json("info" if entries >= hops else "warn", msg="forwarded header shape", entries=entries, trusted_proxy_hops=hops,
+             note="" if entries >= hops else "fewer entries than TRUSTED_PROXY_HOPS: rate limits use the proxy's address")
 
 
 def _local(ip: str) -> bool:
@@ -463,7 +550,8 @@ def inbound_address(company_id: str) -> str:
 
 def delete_company_data(company_id: str) -> int:
     """Remove a company: its users and sessions, company file (and the copy of an imported JSON
-    file), reset snapshots, uploads, inbound and calendar addresses, helper and mail records. Backups that hold it expire on their own.
+    file), reset snapshots, uploads, inbound and calendar addresses, helper and mail records, and
+    its QuickBooks connection. Backups that hold it expire on their own.
     Used by the owner's Delete the company and by admin.py for a deletion request. Returns how
     many users were removed."""
     removed = auth.delete_company_users(company_id)  # every session of the company ends here
@@ -484,6 +572,7 @@ def delete_company_data(company_id: str) -> int:
     mailer.forget_company(company_id)
     sms.forget_company(company_id)
     reminders.forget_company(company_id)
+    qbo.forget_company(company_id)   # its QuickBooks tokens too, revoked at Intuit (H4)
     return removed
 
 
@@ -677,6 +766,25 @@ class Server(ThreadingHTTPServer):
     daemon_threads = True
     request_queue_size = 64
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._busy = 0
+        self._busy_cond = threading.Condition()
+
+    def busy(self, delta: int) -> None:
+        """Count the requests being answered (not idle kept-alive connections), for drain()."""
+        with self._busy_cond:
+            self._busy += delta
+            self._busy_cond.notify_all()
+
+    def drain(self, seconds: float) -> int:
+        """After shutdown(): wait up to `seconds` for the requests being answered. Returns how many were left."""
+        deadline = time.monotonic() + seconds
+        with self._busy_cond:
+            while self._busy > 0 and time.monotonic() < deadline:
+                self._busy_cond.wait(max(0.0, deadline - time.monotonic()))
+            return self._busy
+
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "Duracash"
@@ -741,6 +849,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send(code, json.dumps(payload).encode(), "application/json", headers)
 
     def _read_json(self) -> dict:
+        self._require_json()
         raw_length = self.headers.get("Content-Length", "0") or "0"
         try:
             length = int(raw_length)
@@ -756,7 +865,7 @@ class Handler(BaseHTTPRequestHandler):
         raw = self._read_body(length)
         try:
             body = json.loads(raw.decode("utf-8") or "{}")
-        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):  # nested too deep to read
+        except (UnicodeDecodeError, ValueError, RecursionError):  # nested too deep, or a number too long to read (L4)
             raise BadRequest("Request body must be valid JSON.")
         if not isinstance(body, dict):
             raise BadRequest("Request body must be a JSON object.")
@@ -845,18 +954,21 @@ class Handler(BaseHTTPRequestHandler):
             self._json(429, {"error": "Too many messages to this address this hour. Try again later."})
             return True
         password = os.environ.get("INBOUND_WEBHOOK_PASSWORD", "")
-        if password:
-            given = ""
-            auth_header = self.headers.get("Authorization") or ""
-            if auth_header[:6].lower() == "basic ":
-                try:
-                    given = base64.b64decode(auth_header[6:].strip(), validate=True).decode("utf-8").split(":", 1)[-1]
-                except (ValueError, UnicodeDecodeError):
-                    given = ""
-            if not hmac.compare_digest(given.encode(), password.encode()):
-                self._json(401, {"error": "Sign-in required for this address."}, {"WWW-Authenticate": 'Basic realm="Duracash inbound"'})
-                return True
+        if password and not self._basic_password_ok(password):
+            self._json(401, {"error": "Sign-in required for this address."}, {"WWW-Authenticate": 'Basic realm="Duracash inbound"'})
+            return True
         return False
+
+    def _basic_password_ok(self, password: str) -> bool:
+        """HTTP Basic's password (any user name) matches, compared in constant time."""
+        given = ""
+        auth_header = self.headers.get("Authorization") or ""
+        if auth_header[:6].lower() == "basic ":
+            try:
+                given = base64.b64decode(auth_header[6:].strip(), validate=True).decode("utf-8").split(":", 1)[-1]
+            except (ValueError, UnicodeDecodeError):
+                given = ""
+        return hmac.compare_digest(given.encode(), password.encode())
 
     def _mutate(self, company_id: str, fn, user: dict | None = None, deliver: bool = True, end_trial: bool = True) -> tuple:
         """The one way a company's state is changed (R6-08). Under the company's lock: load, run
@@ -943,6 +1055,7 @@ class Handler(BaseHTTPRequestHandler):
         up. 0 means no proxy: the socket's address, and the header is ignored."""
         hops = trusted_proxy_hops()
         forwarded = [p.strip() for p in (self.headers.get("X-Forwarded-For") or "").split(",") if p.strip()]
+        _note_forwarded_shape(len(forwarded), hops)
         return forwarded[-hops] if hops and len(forwarded) >= hops else self.client_address[0]
 
     def _session_user(self) -> dict | None:
@@ -965,22 +1078,20 @@ class Handler(BaseHTTPRequestHandler):
         return user
 
     def do_GET(self) -> None:
-        self._rid, self._t0 = secrets.token_hex(6), time.monotonic()
-        try:
-            self._get()
-        except BadRequest as exc:
-            self._json(exc.code, {"error": str(exc), "request_id": self._rid})
-        except domain.GateError as exc:
-            self._json(409, _gate(exc))
-        except CompanyMissing:
-            self._json(503, {"error": CompanyMissing.MESSAGE, "request_id": self._rid})
-        except Exception:
-            self._crash()
+        self._answer(self._get)
 
     def do_POST(self) -> None:
+        self._answer(self._post)
+
+    def _answer(self, run) -> None:
         self._rid, self._t0 = secrets.token_hex(6), time.monotonic()
+        busy = getattr(self.server, "busy", None)   # counted for a clean stop on SIGTERM (Server.drain)
+        if busy:
+            busy(1)
+        if not _FORWARDED_LOGGED.is_set():
+            _note_forwarded_shape(len([p for p in (self.headers.get("X-Forwarded-For") or "").split(",") if p.strip()]), trusted_proxy_hops())
         try:
-            self._post()
+            run()
         except BadRequest as exc:
             self._json(exc.code, {"error": str(exc), "request_id": self._rid})
         except domain.GateError as exc:
@@ -989,6 +1100,9 @@ class Handler(BaseHTTPRequestHandler):
             self._json(503, {"error": CompanyMissing.MESSAGE, "request_id": self._rid})
         except Exception:
             self._crash()
+        finally:
+            if busy:
+                busy(-1)
 
     # ----- routing (P2-7): one table, one handler per route -----
     # Access levels: "public" (no sign-in), "user" (signed in; the handler reads its own body,
@@ -1081,7 +1195,54 @@ class Handler(BaseHTTPRequestHandler):
         self._dispatch("GET")
 
     def _post(self) -> None:
+        if self._cross_site_refused():
+            return
         self._dispatch("POST")
+
+    # Posted by services, not browsers, each with its own check: the email service and Twilio
+    # (token and signature or password), the mail provider's events (token), Stripe (signature),
+    # and the phone's share menu (Sec-Fetch-Site, _share_target).
+    CROSS_SITE_OK = ("/api/inbound/", "/api/mail-events/", "/api/stripe/webhook", "/share")
+    # The bodies a cross-site HTML form can send without the browser asking first (M1).
+    FORM_TYPES = ("application/x-www-form-urlencoded", "multipart/form-data", "text/plain")
+
+    def _cross_site_refused(self) -> bool:
+        """M1: a POST from another site's page is refused, so a signed-in person's browser can't be
+        made to sign in, sign out, or change anything by a page elsewhere. SameSite=Lax cookies
+        already stop most of it; this checks the Origin header the browser sends with every POST
+        (Sec-Fetch-Site where there is none). A request without either is not from a browser page.
+        Answers and returns True when refused."""
+        path = urlparse(self.path).path
+        if path.startswith(self.CROSS_SITE_OK):
+            return False
+        origin = (self.headers.get("Origin") or "").strip()
+        if origin:
+            ok = origin != "null" and urlparse(origin).netloc.lower() in self._own_hosts()
+        else:
+            ok = (self.headers.get("Sec-Fetch-Site") or "").lower() != "cross-site"
+        if not ok:
+            log_json("warn", msg="cross-site post refused", path=redact(path), rid=self._rid)
+            self.close_connection = True
+            self._json(403, {"error": "This request came from another site, so it was refused. Open Duracash and try again."})
+        return not ok
+
+    def _own_hosts(self) -> set:
+        """This site's host names as a browser addresses it: DURACASH_URL's, and the Host the
+        request came to (a browser always sends the one in its address bar)."""
+        hosts = {(self.headers.get("Host") or "").strip().lower()}
+        forwarded = (self.headers.get("X-Forwarded-Host") or "").split(",")[0].strip().lower()
+        if forwarded:
+            hosts.add(forwarded)
+        url = app_url()
+        if url:
+            hosts.add(urlparse(url).netloc.lower())
+        return hosts - {""}
+
+    def _require_json(self) -> None:
+        """A JSON route refuses the body types a cross-site form can send (M1)."""
+        ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if ctype in self.FORM_TYPES:
+            raise BadRequest("Send JSON (Content-Type: application/json).", 415)
 
     def _get_fallback(self, path: str) -> None:
         if path in {"/", "/index.html"} or (APP_PATH_RE.match(path) and path.split("/")[1] in APP_SECTIONS):
@@ -1097,30 +1258,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def _g_healthz(self, m) -> None:
         # For an uptime monitor: no sign-in, no secrets, 503 when data can't be written or the
-        # disk is nearly full (R6-06: a full disk fails every save and every backup).
-        writable = True
-        try:
-            probe = storage.DATA_DIR / f".health-{secrets.token_hex(4)}"
-            storage.DATA_DIR.mkdir(parents=True, exist_ok=True)
-            probe.write_text("ok")
-            probe.unlink()
-        except OSError:
-            writable = False
-        try:
-            free_mb = shutil.disk_usage(storage.DATA_DIR).free // (1024 * 1024)
-        except OSError:
-            free_mb = None
-        roomy = free_mb is None or free_mb >= DISK_FREE_MIN_MB
-        ok = writable and roomy
-        self._json(200 if ok else 503, {
-            "ok": ok,
-            "storage": "ok" if ok else "not writable" if not writable else f"under {DISK_FREE_MIN_MB} MB free",
-            "disk_free_mb": free_mb,
-            "email": "configured" if mailer.configured() else "not set up",
-            "last_backup": backup.newest_time(),
-            "offsite_backup": offsite.last_upload() if offsite.configured() else "not set up",
-            "env": "production" if production() else "development",
-        })
+        # disk is nearly full (R6-06: a full disk fails every save and every backup). Public, so
+        # it says only whether all is well and where (L4); the details are for the founders, from
+        # `python3 admin.py health` on the server, and in the log when the check fails.
+        details = health_details()
+        if not details["ok"]:
+            log_json("warn", msg="health check failing", storage=details["storage"], disk_free_mb=details["disk_free_mb"], rid=self._rid)
+        self._json(200 if details["ok"] else 503, {"ok": details["ok"], "env": env_name()})
 
     def _g_team(self, m, user) -> None:
         self._json(200, self._team_reply(user))
@@ -1279,8 +1423,8 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"jobs": jobs})
 
     def _g_job_archive(self, m, user) -> None:
-        """The job file (J9): its record files, pay app PDFs and a summary, in one zip. Every
-        signed-in person of the company (owners and members) may download it."""
+        """The job file (J9): its record files, pay app PDFs and a summary, in one zip. It holds the
+        payroll and waivers too, so it takes "See payroll and sensitive documents" (H2, the route's perm)."""
         with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
         job = next((j for j in state.get("jobs", []) if j["id"] == m.group(1)), None)
@@ -1307,6 +1451,11 @@ class Handler(BaseHTTPRequestHandler):
     def _g_log_page(self, m, user) -> None:
         offset, limit, q = self._paging()
         key = "email_log" if m.group(1) == "outbox" else "audit"
+        # The whole company's activity log (team, billing and data changes too) is with the export (L1);
+        # a job's own history stays open to everyone on its page (/api/timeline).
+        if key == "audit" and not has_perm(user, "data"):
+            self._json(403, {"error": NO_PERMISSION})
+            return
         with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
             rows = state.get(key, [])
@@ -1609,6 +1758,10 @@ class Handler(BaseHTTPRequestHandler):
     def _g_file(self, m, user) -> None:
         with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
+        # Payroll, time sheets, waivers and contracts take "See payroll and sensitive documents" (H2).
+        if not profiles.may_open_file(user, state, m.group(1)):
+            self._json(403, {"error": SENSITIVE_WORDS})
+            return
         self._serve_file(user["company_id"], state, m.group(1))
 
     def _g_payer_page(self, m) -> None:
@@ -1832,6 +1985,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _p_demo(self, m) -> None:
         """Look around before signing up (R2-06): a session as the demo owner, no password typed."""
+        self._require_json()
         user = demo_user()
         if not user:
             self._json(404, {"error": "There is no sample company on this server."})
@@ -1839,6 +1993,7 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"user": user}, self._set_cookie(auth.create_session(user)))
 
     def _p_logout(self, m) -> None:
+        self._require_json()
         auth.destroy_session(self._token())
         self._json(200, {"ok": True}, self._set_cookie(None))
 
@@ -2100,7 +2255,7 @@ class Handler(BaseHTTPRequestHandler):
         step = m.group(1)
         try:
             if step == "begin":
-                setup = auth.totp_begin(ctx.user["id"])
+                setup = auth.totp_begin(ctx.user["id"], ctx.body.get("password"))
                 # A QR code of the same key, for the phone's authenticator app to scan (R6-05).
                 self._json(200, {**setup, "qr": qr.data_uri(setup["uri"])})
             elif step == "enable":
@@ -2164,6 +2319,13 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, sov.parse_rows(_text(ctx.body, "text", limit=200_000)))
 
     def _p_outbox_retry(self, m, ctx: "Ctx") -> None:
+        # Sending an email again takes what sending it took (L1): a pay app, send_payapps; a waiver, send_waivers.
+        state = company_state(ctx.company_id)
+        entry = next((e for e in state.get("email_log", []) if e.get("id") == m.group(1)), None)
+        need = profiles.EMAIL_KIND_PERMS.get(str((entry or {}).get("kind") or ""))
+        if need and not has_perm(ctx.user, need, state):
+            self._json(403, {"error": NO_PERMISSION})
+            return
         self._json(*outbox.retry_email(SITE, ctx.company_id, ctx.user, m.group(1), self._rid))
 
     def _p_rotate(self, m, ctx: "Ctx") -> None:
@@ -2389,7 +2551,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def _delete_account(self, body: dict, user: dict) -> None:
         company_id = user["company_id"]
-        if not auth.check_password(user["id"], body.get("password")):
+        try:
+            right = auth.check_password(user["id"], body.get("password"))
+        except auth.RateLimited as exc:
+            self._json(429, {"error": str(exc)})
+            return
+        if not right:
             self._json(409, {"error": "Password is wrong. Nothing was deleted."})
             return
         with company_lock(company_id):
@@ -2574,12 +2741,24 @@ class Handler(BaseHTTPRequestHandler):
         if not company_id:
             self._json(404, {"error": "Not found"})
             return
+        key = os.environ.get("INBOUND_SIGNING_KEY", "")
+        # M3: the address alone is not enough in production. Without INBOUND_WEBHOOK_PASSWORD or
+        # INBOUND_SIGNING_KEY anyone who learns an address could fill the Inbox, so nothing is taken.
+        if production() and not (key or os.environ.get("INBOUND_WEBHOOK_PASSWORD")):
+            log_json("warn", msg="inbound email refused: set INBOUND_WEBHOOK_PASSWORD or INBOUND_SIGNING_KEY", rid=self._rid)
+            self.close_connection = True
+            self._json(503, {"error": "Inbound email isn't set up on this server yet."})
+            return
         if self._inbound_refused(token):
             return
         data = self._read_raw(MAX_INBOUND_BYTES)
-        key = os.environ.get("INBOUND_SIGNING_KEY", "")
         if key and not _signed_by_provider(data, self.headers.get("Content-Type") or "", key):
             self._json(401, {"error": "Signature check failed."})
+            return
+        # The same post twice (a replay, or the provider trying again) files nothing the second time (M3).
+        replay = (f"inbound:{company_id}", _replay_key(data, self.headers.get("Content-Type") or "", key))
+        if _seen_before(*replay):
+            self._json(200, {"ok": True, "ignored": "already received"})
             return
         if demo_locked(company_id):
             self._json(200, {"ok": True, "ignored": "the demo is read-only"})
@@ -2588,6 +2767,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             parsed = importer.parse_inbound_email(data, self.headers.get("Content-Type") or "")
         except importer.BadPayload as exc:
+            _forget_seen(*replay)
             raise BadRequest(str(exc))
         stored, skipped = self._store_email_files(company_id, parsed, "inbound email")
 
@@ -2604,15 +2784,26 @@ class Handler(BaseHTTPRequestHandler):
         status, payload = self._mutate(company_id, add)
         if status != 200:
             importer.discard(company_id, stored)
+            _forget_seen(*replay)   # not filed, so the provider's next try is taken
             self._json(status, payload)
             return
         self._json(200, {"ok": True})
 
     def _mail_events(self, token: str) -> None:
-        """Bounce and complaint webhook from the mail provider (P1-4); see mail_events.py."""
+        """Bounce and complaint webhook from the mail provider (P1-4); see mail_events.py. The token
+        in the address is compared in constant time; with MAIL_EVENTS_PASSWORD set, HTTP Basic's
+        password must match too (L4): Postmark and SendGrid both take https://user:PASSWORD@host/...
+        as the webhook address. At most 120 posts an hour."""
         secret = os.environ.get("MAIL_EVENTS_TOKEN", "")
-        if len(secret) < 16 or not hmac.compare_digest(token, secret):
+        if len(secret) < 16 or not hmac.compare_digest(token.encode(), secret.encode()):
             self._json(404, {"error": "Not found"})
+            return
+        if not _within_limit("mail-events", INBOUND_PER_HOUR, 3600):
+            self._json(429, {"error": "Too many posts this hour. Try again later."})
+            return
+        password = os.environ.get("MAIL_EVENTS_PASSWORD", "")
+        if password and not self._basic_password_ok(password):
+            self._json(401, {"error": "Sign-in required for this address."}, {"WWW-Authenticate": 'Basic realm="Duracash mail events"'})
             return
         try:
             body = json.loads(self._read_raw(MAX_BODY_BYTES) or b"null")
@@ -2968,7 +3159,11 @@ class Handler(BaseHTTPRequestHandler):
             raise domain.GateError("Reset not done. Type your company name exactly to confirm.",
                                    ["Reset deletes every job, client and record in this company."])
         # As Delete asks for it: a session left open on a shared computer can't wipe the company (R6-05).
-        if not auth.check_password(ctx.user["id"], ctx.body.get("password")):
+        try:
+            right = auth.check_password(ctx.user["id"], ctx.body.get("password"))
+        except auth.RateLimited as exc:
+            raise domain.GateError(f"Reset not done. {exc}")
+        if not right:
             raise domain.GateError("Reset not done. Your password is wrong.", fields={"password": "Enter your password to confirm."})
         if company_exists(company_id):
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -3232,7 +3427,7 @@ ROUTES = [
 
     # == stream: jobs-clients ==
     Route("GET", r"/api/payers/([^/]+)/jobs", "_g_payer_jobs", "user"),
-    Route("GET", r"/api/jobs/([^/]+)/archive/job-file\.zip", "_g_job_archive", "user"),
+    Route("GET", r"/api/jobs/([^/]+)/archive/job-file\.zip", "_g_job_archive", "user", perm="sensitive_docs"),
     Route("POST", r"/api/contract/read", "_p_contract_read", "user"),
 
     # == stream: payapps-cos ==
@@ -3270,12 +3465,12 @@ ROUTES = [
     Route("GET", r"/api/timeline", "_g_timeline", "user"),
     Route("GET", r"/api/export", "_g_export", "user"),
     Route("GET", r"/api/team", "_g_team", "user"),
-    Route("GET", r"/api/metrics", "_g_metrics", "user"),
+    Route("GET", r"/api/metrics", "_g_metrics", "user", perm="financials"),
     Route("GET", r"/api/financials\.csv", "_g_financials_csv", "user", perm="financials"),
     Route("GET", r"/api/financials", "_g_financials", "user", perm="financials"),
     Route("GET", r"/api/qbo/status", "_g_qbo_status", "user"),
     Route("GET", r"/api/billing", "_g_billing", "user"),
-    Route("GET", r"/api/qbo/reconcile", "_g_qbo_reconcile", "user"),
+    Route("GET", r"/api/qbo/reconcile", "_g_qbo_reconcile", "user", perm="financials"),
     Route("GET", r"/api/qbo/callback", "_g_qbo_callback"),
     Route("GET", r"/api/qbo/items", "_g_qbo_items", "user", perm="financials"),
     Route("GET", r"/api/qbo/customers", "_g_qbo_customers", "user", perm="financials"),
@@ -3593,6 +3788,8 @@ def _edit_job(h, st, j, i, c):
 # Who may do what (S6): each person's permission profile (domain/profiles.py). Every job action
 # is listed in profiles.JOB_ACTION_PERMS with the permission it needs, or None for anyone.
 NO_PERMISSION = "Your permissions don't cover that. Someone who manages the team can change them."
+SENSITIVE_WORDS = ("Opening payroll, time sheets, lien waivers and contracts needs the permission "
+                   "\"See payroll and sensitive documents\". Someone who manages the team can give it.")
 # What an owner-only route says to anyone else: only an owner can, so asking a manager won't help.
 OWNER_ONLY = {h: "Only an owner can add, change or delete permission profiles." for h in ("_p_profile_save", "_p_profile_delete")}
 
@@ -3763,6 +3960,42 @@ JOB_ACTIONS = {
                                                                          looked=c.body.get("looked") is True, answer=_text(c.body, "answer"), answerer=_answerer(c, st))),
 }
 
+REPLAY_SECONDS = 24 * 3600
+_SEEN: dict[str, float] = {}
+_SEEN_LOCK = threading.Lock()
+
+
+def _replay_key(data: bytes, raw_ctype: str, key: str) -> str:
+    """What makes one inbound post unique: the provider's signing token when it is signed (Mailgun
+    sends a new one with every post), else the post itself."""
+    if key:
+        nonce = str(importer.provider_fields(data, raw_ctype).get("token") or "")
+        if nonce:
+            return "token:" + nonce
+    return "body:" + hashlib.sha256(data).hexdigest()
+
+
+def _seen_before(scope: str, key: str, now: float | None = None) -> bool:
+    """True when this key came in the last REPLAY_SECONDS (and so it is a repeat); else noted now.
+    In memory: a restart forgets, which the signature's 15-minute window covers for signed posts."""
+    now = time.monotonic() if now is None else now
+    full = f"{scope}:{key}"
+    with _SEEN_LOCK:
+        if len(_SEEN) > 50_000:
+            for k in [k for k, t in _SEEN.items() if now - t >= REPLAY_SECONDS]:
+                _SEEN.pop(k, None)
+        when = _SEEN.get(full)
+        if when is not None and now - when < REPLAY_SECONDS:
+            return True
+        _SEEN[full] = now
+        return False
+
+
+def _forget_seen(scope: str, key: str) -> None:
+    with _SEEN_LOCK:
+        _SEEN.pop(f"{scope}:{key}", None)
+
+
 def _signed_by_provider(data: bytes, raw_ctype: str, key: str, now: float | None = None) -> bool:
     """Mailgun's signature (R6-07): `signature` is the hex HMAC-SHA256 of `timestamp` + `token`
     under the signing key, and the timestamp is within 15 minutes."""
@@ -3776,11 +4009,78 @@ def _signed_by_provider(data: bytes, raw_ctype: str, key: str, now: float | None
     return fresh and bool(nonce) and hmac.compare_digest(expected, signature)
 
 
+SCHEMA_MARKER = "schema_version.json"
+
+
+def _marker_path() -> Path:
+    return storage.DATA_DIR / SCHEMA_MARKER
+
+
+def _has_data() -> bool:
+    return auth.AUTH_PATH.exists() or bool(company_ids())
+
+
+def backup_before_upgrade(log=None) -> Path | None:
+    """H7: a data upgrade can't be rolled back by putting the old code back (it refuses company
+    files from newer code), so before this code upgrades anything it backs everything up once:
+    duracash-<time>-pre-upgrade-schema<N>.tar.gz, with the other backups. The marker file says which
+    schema the data was last opened with; a missing marker (data from before it, or just restored)
+    counts as older. Returns the backup made, or None when none was due. A failed backup raises:
+    the server doesn't upgrade data it couldn't back up first."""
+    log = log or (lambda msg: log_json("info", msg=msg))
+    want = {"schema": migrations.SCHEMA_VERSION, "auth_steps": len(migrations.AUTH_STEPS)}
+    try:
+        seen = json.loads(_marker_path().read_text())
+    except (OSError, ValueError):
+        seen = None
+    if isinstance(seen, dict) and int(seen.get("schema") or 0) > want["schema"]:
+        # Old code on newer data: Render's Rollback after a schema change (docs/runbooks.md, runbook 1).
+        msg = (f"the data was last opened with schema {seen.get('schema')} and this code knows up to {want['schema']}: "
+               "companies already upgraded won't open. Deploy the newer code again, or restore the pre-upgrade backup (runbook 2).")
+        log_json("error", msg=msg)
+        alerts.notify("schema:newer", msg)
+        return None
+    due = _has_data() and not (isinstance(seen, dict) and int(seen.get("schema") or 0) >= want["schema"]
+                               and int(seen.get("auth_steps") or 0) >= want["auth_steps"])
+    made = None
+    if due:
+        made = backup.make_backup(BACKUP_LOCKS, label=f"pre-upgrade-schema{want['schema']}")
+        log(f"backup before the data upgrade written: {made.name}")
+    storage.write_json(_marker_path(), want)
+    return made
+
+
+BACKUP_LOCKS = {"auth": auth.LOCK, "tokens": importer.TOKENS_LOCK, "deleted": _DELETED_LOCK, "qbo": qbo.LOCK}
+DRAIN_SECONDS = 20   # Render waits 30 seconds after SIGTERM before it stops the container
+
+
+def stop_on_sigterm(server: "Server") -> None:
+    """A deploy or restart sends SIGTERM (L4): stop taking new connections, let the requests already
+    running finish (Server.drain), then exit, rather than being cut off mid-save."""
+    import signal
+
+    def stop(signum, frame) -> None:
+        log_json("info", msg="SIGTERM: finishing the requests in progress, then stopping")
+        threading.Thread(target=server.shutdown, name="shutdown", daemon=True).start()
+
+    signal.signal(signal.SIGTERM, stop)
+
+
 def main() -> None:
     problems = config_problems()
     if problems:
         for problem in problems:
-            log_json("error", msg=f"Refusing to start in production: {problem}")
+            log_json("error", msg=f"Refusing to start ({env_name()}): {problem}")
+        sys.exit(1)
+    if production() and os.environ.get("DURACASH_ALLOW_NO_OFFSITE") == "1":
+        for problem in recovery_problems():
+            log_json("warn", msg=f"Starting anyway (DURACASH_ALLOW_NO_OFFSITE=1): {problem}")
+    try:
+        backup_before_upgrade()
+    except Exception as exc:
+        log_json("error", msg=f"Refusing to start: the backup before the data upgrade failed ({exc.__class__.__name__}: {exc}). "
+                              "Free disk space, or restore, and deploy again.")
+        alerts.notify("backup:pre-upgrade", "the backup before a data upgrade failed; the server did not start")
         sys.exit(1)
     auth.upgrade_file(migrations.AUTH_STEPS)
     if demo_enabled():
@@ -3791,12 +4091,13 @@ def main() -> None:
     print(f"Data directory: {storage.DATA_DIR}")
     if demo_enabled():
         print(f"Demo login: {auth.DEMO_EMAIL} / {auth.DEMO_PASSWORD}")
-    backup.start_scheduler(
-        {"auth": auth.LOCK, "tokens": importer.TOKENS_LOCK, "deleted": _DELETED_LOCK, "qbo": qbo.LOCK},
-        log=lambda msg: log_json("info", msg=msg),
-    )
+    backup.start_scheduler(BACKUP_LOCKS, log=lambda msg: log_json("info", msg=msg))
     monthly.start(SITE)
+    stop_on_sigterm(server)
     server.serve_forever()
+    left = server.drain(DRAIN_SECONDS)
+    server.server_close()
+    log_json("info" if not left else "warn", msg="stopped", unfinished_requests=left)
 
 
 if __name__ == "__main__":

@@ -360,6 +360,9 @@ function twoStepCardHtml(prompt = false) {
           <li>Can't scan it? Choose to enter a key and type this one: <code id="2fa-key">${twoStepSetup.secret.match(/.{1,4}/g).join(" ")}</code> <button class="btn small secondary" data-action="copy" data-target="2fa-key">Copy</button></li>
           <li>Type the 6-digit code the app shows: <span class="form-inline"><input id="2fa-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6"><button class="btn small" data-action="2fa-enable">Turn on</button></span></li>
         </ol>` : "";
+  // Starting the set-up asks for the password again (M2): an open session alone can't add a phone.
+  const begin = (cls, words) => `<div class="form-inline"><input id="2fa-begin-pw" type="password" placeholder="Your password" autocomplete="current-password" aria-label="Your password">
+        <button class="btn small${cls}" data-action="2fa-begin">${words}</button></div>`;
   let body;
   if (recoveryCodes) {
     body = `<div class="invite-result" role="status"><strong>Two-step sign-in uses your authenticator app now.</strong> Save these recovery codes somewhere safe, such as your password manager. Each one signs you in once if you lose your phone. They are not shown again.
@@ -372,10 +375,10 @@ function twoStepCardHtml(prompt = false) {
           <button class="btn small secondary" data-action="2fa-disable">Use email codes</button></div></details>` : ""}`;
   } else if (codesByEmail) {
     body = `<p class="sub"><span class="pill green">On</span> Email codes. Signing in on a new device asks for a 6-digit code we email to <span class="long-word">${me.email}</span>; that device is then remembered for 30 days.</p>
-      ${setup || `<button class="btn small secondary" data-action="2fa-begin">Use an authenticator app instead</button>`}`;
+      ${setup || begin(" secondary", "Use an authenticator app instead")}`;
   } else {
     body = `<p class="sub"><span class="pill amber">Not set up</span> Add a code from your phone to every sign-in, so a stolen password isn't enough.</p>
-      ${setup || `<button class="btn small" data-action="2fa-begin">Set up two-step sign-in</button>`}`;
+      ${setup || begin("", "Set up two-step sign-in")}`;
   }
   return `<div class="card${prompt ? " two-step-prompt" : ""}" id="two-step">
       <h2>${prompt ? "One more step: two-step sign-in" : "Two-step sign-in"}</h2>
@@ -592,6 +595,8 @@ export const views = {
       <div class="card"><h2>Companies</h2><p class="sub">Every company on this server, with its trial and, once Stripe is set up, its subscription. Nothing is enforced unless BILLING_ENFORCE=1.</p><div id="admin-companies">${adminCompaniesHtml()}</div></div>`;
   },
   audit() {
+    // The company's whole log takes "Export and reset data" (L1); each job's history is on its page.
+    if (!can("data")) return `<h1>Activity log</h1><p class="sub">The company's activity log needs the permission "Export and reset data". Each job's history is on its own page.</p>`;
     const page = listPage("audit", auditQuery());
     const events = page ? page.entries : [];
     return `
@@ -726,7 +731,7 @@ export const actions = {
     if (r && r.ok) { formOpen.reset = false; render(); }
   },
   "2fa-begin": async () => {
-    const r = await postJson("/api/auth/2fa/begin", {});
+    const r = await postJson("/api/auth/2fa/begin", { password: document.getElementById("2fa-begin-pw")?.value || "" });
     if (!r.ok) { toast(r.data.error || "That didn't work."); return; }
     twoStepSetup = escDeep(r.data); render(); document.getElementById("2fa-code")?.focus();
   },

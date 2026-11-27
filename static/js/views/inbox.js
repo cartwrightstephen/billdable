@@ -10,7 +10,7 @@ import { jobsInOrder, choiceJobs, choiceLine, pasteGuess } from "../inbox.js";
 import { termText } from "../terms.js";
 import { draftValue, clearForm } from "../forms.js";
 import { state, me, currentView, currentJobId, clearSession, onSessionEnd, formOpen } from "../state.js";
-import { load, toast, renderLanding, render, clearJobDetails, post, setState, DEMO_COMPANY_ID, emptyState, nav, listPage, can, may } from "../app-core.js";
+import { load, toast, renderLanding, render, clearJobDetails, post, setState, DEMO_COMPANY_ID, emptyState, nav, listPage, can, may, fileLink } from "../app-core.js";
 import { moreButton } from "../dom.js";
 import { printSheet } from "./communications.js";
 import { stageRecordFiles, rememberDailyJob } from "./daily.js";
@@ -259,7 +259,7 @@ export function receivedStatus(r) {
 
 // A row's files, each opening in a new tab; a file taken off the job record since says so.
 export function receivedFilesHtml(r) {
-  const links = (r.files || []).map(f => `<a href="/api/files/${f.id}" target="_blank" rel="noopener">${f.name}</a>`).join(" · ");
+  const links = (r.files || []).map(f => fileLink(f.id, f.name)).join(" · ");
   const gone = r.files_gone ? `${r.files_gone} file${r.files_gone === 1 ? "" : "s"} no longer in the job records` : "";
   return links || gone ? `<div class="sub">Files: ${[links, gone].filter(Boolean).join(" · ")}</div>` : "";
 }
@@ -323,7 +323,7 @@ function inboxItemCard(i) {
     <div class="inbox-head"><span class="pill">${SOURCE_LABELS[i.source] || i.source}</span> <strong>${title}</strong>
       <span class="sub">${i.from ? "from " + i.from + " · " : ""}${fmtDate(i.sent_at || i.received_at)}${i.note_date ? " · dated " + fmtDate(i.note_date) : ""}</span></div>
     ${preview ? `<details><summary>${preview.slice(0, 140)}${preview.length > 140 ? "…" : ""}</summary><pre class="inbox-text">${preview}</pre></details>` : ""}
-    ${files.length ? `<div class="sub">Files: ${files.map(f => `<a href="/api/files/${f.id}" target="_blank" rel="noopener">${f.name}</a>`).join(" · ")}</div>` : ""}
+    ${files.length ? `<div class="sub">Files: ${files.map(f => fileLink(f.id, f.name)).join(" · ")}</div>` : ""}
     ${(i.amounts || []).length || (i.dates || []).length ? `<div class="sub">Found: ${(i.amounts || []).map(a => money(a)).join(", ")}${(i.amounts || []).length && (i.dates || []).length ? " · " : ""}${(i.dates || []).map(fmtDate).join(", ")}</div>` : ""}
     ${(i.skipped_attachments || []).length ? `<div class="field-error">${i.skipped_attachments.join(" ")}</div>` : ""}
     ${choices.length ? `<div class="inbox-choices"><span class="sub">${choiceLine(choices, state.payers || [])}</span>

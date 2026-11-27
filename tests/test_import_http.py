@@ -562,9 +562,14 @@ class ImportHttpTests(unittest.TestCase):
             self.assertEqual(self.request("POST", email_path, raw=urlencode(old).encode(), headers=form)[0].status, 401, "too old")
             res, data = self.request("POST", email_path, raw=urlencode(good).encode(), headers=form)
             self.assertEqual(res.status, 200, data)
-            # Mailgun's JSON webhooks carry the three in a "signature" object.
-            nested = {"signature": {k: good[k] for k in ("timestamp", "token", "signature")}, "From": "ap@park.example",
-                      "Subject": "Signed JSON", "TextBody": "About 9 Elm Street"}
+            # The same signed post again is a replay (M3): answered, filed once.
+            res, data = self.request("POST", email_path, raw=urlencode(good).encode(), headers=form)
+            self.assertEqual((res.status, data.get("ignored")), (200, "already received"))
+            # Mailgun's JSON webhooks carry the three in a "signature" object; each post has its own token.
+            again = "b" * 50
+            nested = {"signature": {"timestamp": stamp, "token": again,
+                                    "signature": hmac.new(key.encode(), (stamp + again).encode(), hashlib.sha256).hexdigest()},
+                      "From": "ap@park.example", "Subject": "Signed JSON", "TextBody": "About 9 Elm Street"}
             self.assertEqual(self.request("POST", email_path, nested)[0].status, 200)
         res, state = self.request("GET", "/api/state", cookie=cookie)
         got = [(i["subject"], i["from"], i["suggested_job_id"] is not None) for i in state["inbox"] if i["source"] == "email"]
