@@ -50,6 +50,13 @@ MIGRATIONS = [
 ]
 
 
+class ChangedElsewhere(RuntimeError):
+    """A save refused (M7): the company was written by another program (a second server, an
+    admin command, a restore) after this one read it. Saving would throw that change away."""
+
+    MESSAGE = "Another change to your company was saved at the same moment. Nothing was saved; reload and try again."
+
+
 def backend() -> str:
     return "json" if (os.environ.get("DURACASH_STORAGE") or "").strip().lower() == "json" else "sqlite"
 
@@ -74,6 +81,17 @@ class JsonStore:
     def __init__(self, folder: Path) -> None:
         self.folder = Path(folder)
         self.last_rows_written = 0
+        # company id -> the file's (inode, mtime, size) as last read or written here (M7)
+        self._seen: dict[str, tuple] = {}
+        self._seen_lock = threading.Lock()
+
+    @staticmethod
+    def _stamp(path: Path) -> tuple | None:
+        try:
+            st = path.stat()
+        except FileNotFoundError:
+            return None
+        return (st.st_ino, st.st_mtime_ns, st.st_size)
 
     def path(self, company_id: str) -> Path:
         return self.folder / f"{company_id}.json"
@@ -86,13 +104,33 @@ class JsonStore:
 
     def load(self, company_id: str) -> dict | None:
         path = self.path(company_id)
-        return json.loads(path.read_text()) if path.exists() else None
+        for _ in range(3):
+            before = self._stamp(path)
+            if before is None:
+                return None
+            state = json.loads(path.read_text())
+            if self._stamp(path) == before:   # not replaced while it was read
+                with self._seen_lock:
+                    self._seen[company_id] = before
+                return state
+        with self._seen_lock:
+            self._seen.pop(company_id, None)
+        return state
 
     def save(self, company_id: str, state: dict) -> None:
-        storage.write_json(self.path(company_id), state)
+        path = self.path(company_id)
+        with self._seen_lock:
+            seen = self._seen.get(company_id)
+        if seen is not None and self._stamp(path) != seen:
+            raise ChangedElsewhere(company_id)
+        storage.write_json(path, state)
+        with self._seen_lock:
+            self._seen[company_id] = self._stamp(path)
         self.last_rows_written = 1
 
     def delete(self, company_id: str) -> None:
+        with self._seen_lock:
+            self._seen.pop(company_id, None)
         try:
             self.path(company_id).unlink()
         except OSError:
@@ -210,7 +248,10 @@ class SqliteStore:
                 state[kind] = lists.get(kind, [])
         state.pop("_row_present", None)
         with self._seen_lock:
-            self._seen[company_id] = (head[1], _digest(head[0]), digests)
+            # A read without the company lock can finish after a newer save here: keep the newer.
+            known = self._seen.get(company_id)
+            if known is None or head[1] >= known[0]:
+                self._seen[company_id] = (head[1], _digest(head[0]), digests)
         return state
 
     # ----- writing -----
@@ -241,8 +282,11 @@ class SqliteStore:
             found = conn.execute("SELECT version FROM companies WHERE id = ?", (company_id,)).fetchone()
             with self._seen_lock:
                 seen = self._seen.get(company_id)
-            if not found or not seen or seen[0] != found[0]:
-                # New company, or one this process hasn't read at its current version: write it all.
+            if seen and (not found or seen[0] != found[0]):
+                # Written by another program since this one read it (M7): saving would lose that change.
+                raise ChangedElsewhere(company_id)
+            if not found or not seen:
+                # New company, or one this process hasn't read: write it all.
                 written = self._write_all(conn, company_id, state, found[0] if found else 0)
                 version = (found[0] if found else 0) + 1
             else:

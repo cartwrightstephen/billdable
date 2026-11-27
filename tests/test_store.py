@@ -62,8 +62,26 @@ class SqliteStoreTests(unittest.TestCase):
         theirs["jobs"][0]["name"] = "Renamed job"
         other.save("co-1", theirs)
         state["jobs"][1]["done_notes"] = "mine"
-        self.db.save("co-1", state)  # version moved on: written whole, so the result is exactly this state
-        self.assertEqual(store.SqliteStore(self.folder).load("co-1"), state)
+        # Version moved on since this copy was read (M7): refused, and the other change stands.
+        with self.assertRaises(store.ChangedElsewhere):
+            self.db.save("co-1", state)
+        self.assertEqual(store.SqliteStore(self.folder).load("co-1"), theirs)
+        mine = self.db.load("co-1")      # read again, changed again: saved
+        mine["jobs"][1]["done_notes"] = "mine"
+        self.db.save("co-1", mine)
+        self.assertEqual(store.SqliteStore(self.folder).load("co-1"), mine)
+
+    def test_an_older_read_finishing_late_does_not_cause_a_false_refusal(self):
+        self.db.save("co-1", seed_state())
+        old = self.db.load("co-1")
+        version = self.db._seen["co-1"][0]
+        self.db.save("co-1", old)                       # version + 1
+        with self.db._seen_lock:                        # an unlocked read of the older version lands now
+            self.db._seen["co-1"] = (version, b"", {})
+        newest = store.SqliteStore(self.folder).load("co-1")
+        self.db.load("co-1")
+        self.assertEqual(self.db._seen["co-1"][0], version + 1)
+        self.db.save("co-1", newest)
 
     def test_companies_save_at_the_same_time(self):
         errors = []
@@ -281,3 +299,73 @@ class BackendChoiceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OneWriterTests(unittest.TestCase):
+    """Security review M7: two programs writing the same data directory."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_json_layout_refuses_a_save_over_a_file_changed_elsewhere(self):
+        mine, other = store.JsonStore(self.root), store.JsonStore(self.root)
+        mine.save("co-1", seed_state())
+        state = mine.load("co-1")
+        theirs = other.load("co-1")
+        theirs["company"]["name"] = "Renamed elsewhere"
+        other.save("co-1", theirs)
+        state["company"]["name"] = "Mine"
+        with self.assertRaises(store.ChangedElsewhere):
+            mine.save("co-1", state)
+        self.assertEqual(json.loads((self.root / "co-1.json").read_text())["company"]["name"], "Renamed elsewhere")
+        fresh = mine.load("co-1")
+        fresh["company"]["name"] = "Mine"
+        mine.save("co-1", fresh)
+        self.assertEqual(other.load("co-1")["company"]["name"], "Mine")
+
+    def _child(self, code: str) -> "subprocess.Popen":
+        import subprocess
+        repo = str(Path(__file__).resolve().parents[1])
+        return subprocess.Popen([sys.executable, "-c", code], cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                env={"PATH": "/usr/bin:/bin", "DURACASH_DATA_DIR": str(self.root), "PYTHONPATH": repo})
+
+    @unittest.skipIf(storage.fcntl is None, "flock is POSIX only")
+    def test_a_second_server_on_the_same_data_directory_is_refused(self):
+        child = self._child("import storage, sys, time\nstorage.claim_data_dir('server')\nprint('held', flush=True)\ntime.sleep(30)")
+        try:
+            self.assertEqual(child.stdout.readline().strip(), b"held")
+            with mock.patch.object(storage, "DATA_DIR", self.root):
+                with self.assertRaises(storage.DataDirBusy) as caught:
+                    storage.claim_data_dir("server")
+            self.assertIn("Another Duracash server", str(caught.exception))
+            self.assertIn("process", str(caught.exception))
+        finally:
+            child.kill()
+            child.wait()
+        with mock.patch.object(storage, "DATA_DIR", self.root):
+            storage.claim_data_dir("server")        # the lock went with the process
+            storage.release_data_dir("server")
+
+    @unittest.skipIf(storage.fcntl is None, "flock is POSIX only")
+    def test_a_process_lock_makes_another_program_wait(self):
+        path = self.root / ".x.lock"
+        child = self._child(f"import storage, time\nlock = storage.ProcessLock({str(path)!r})\nlock.acquire()\nprint('held', flush=True)\ntime.sleep(0.6)\nlock.release()\nprint('let go', flush=True)\ntime.sleep(5)")
+        try:
+            self.assertEqual(child.stdout.readline().strip(), b"held")
+            lock = storage.ProcessLock(lambda: path, reentrant=True)
+            import time
+            started = time.monotonic()
+            with lock:
+                waited = time.monotonic() - started
+                with lock:                      # the same thread may take it again
+                    self.assertTrue(lock._is_owned())
+            self.assertFalse(lock.locked())
+            self.assertGreater(waited, 0.3)
+        finally:
+            child.kill()
+            child.wait()
+

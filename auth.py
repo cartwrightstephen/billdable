@@ -20,12 +20,14 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import passwords
 import storage
 import totp
 import vault
 
 AUTH_PATH = storage.DATA_DIR / "auth.json"
-LOCK = threading.Lock()
+# Held across processes too (M7): admin.py run from the Shell waits for the server's change, and back.
+LOCK = storage.ProcessLock(lambda: AUTH_PATH.with_name(".auth.json.lock"))
 
 MIN_PASSWORD = 10
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -502,6 +504,8 @@ def create_user(
         raise ValueError(RESERVED_WORDS)
     if enforce_policy and len(password) < MIN_PASSWORD:
         raise ValueError(f"Password must be at least {MIN_PASSWORD} characters.")
+    if enforce_policy and passwords.problem(password, email, name):
+        raise ValueError(passwords.problem(password, email, name))
     if not password:
         raise ValueError("Password is required.")
     if not name.strip():
@@ -582,7 +586,20 @@ def login_succeeded(email: str) -> None:
         _FAILURES.pop(str(email or "").strip().lower(), None)
 
 
-def create_session(user: dict[str, Any]) -> str:
+def browser_words(user_agent: str | None) -> str:
+    """A browser's User-Agent as "Chrome on Mac", for the session list (L2). Only this summary is
+    kept, not the header."""
+    ua = str(user_agent or "")
+    browser = next((name for key, name in (("Edg/", "Edge"), ("OPR/", "Opera"), ("Firefox/", "Firefox"), ("FxiOS", "Firefox"),
+                                          ("CriOS", "Chrome"), ("Chrome/", "Chrome"), ("Safari/", "Safari")) if key in ua), "")
+    system = next((name for key, name in (("iPhone", "iPhone"), ("iPad", "iPad"), ("Android", "Android"), ("Windows", "Windows"),
+                                         ("Mac OS X", "Mac"), ("Macintosh", "Mac"), ("CrOS", "Chromebook"), ("Linux", "Linux")) if key in ua), "")
+    if browser and system:
+        return f"{browser} on {system}"
+    return browser or system or "Another browser or app"
+
+
+def create_session(user: dict[str, Any], user_agent: str | None = None) -> str:
     token = secrets.token_urlsafe(32)
     expires = _utcnow() + timedelta(days=SESSION_DAYS)
     with LOCK:
@@ -596,6 +613,8 @@ def create_session(user: dict[str, Any]) -> str:
             "company_id": user["company_id"],
             "expires_at": _iso(expires),
             "last_seen_at": now,
+            "created_at": now,
+            "browser": browser_words(user_agent),
         }
         if user["company_id"] == DEMO_COMPANY_ID:
             # Oldest first; sessions made in the same second keep the order they were made in.
@@ -667,6 +686,41 @@ def session_check(token: str | None) -> tuple[dict[str, Any] | None, str]:
 
 def session_user(token: str | None) -> dict[str, Any] | None:
     return session_check(token)[0]
+
+
+def _session_ref(key: str) -> str:
+    """A session's id in the list (L2): a digest of its stored key, never the key itself."""
+    return hashlib.sha256(("session-ref:" + key).encode()).hexdigest()[:16]
+
+
+def list_sessions(user_id: str, current_token: str | None) -> list[dict[str, Any]]:
+    """This person's live sessions, newest use first, for Settings, My account (L2)."""
+    mine = _digest(current_token) if isinstance(current_token, str) and current_token else ""
+    moment = _utcnow()
+    now = _iso(moment)
+    with LOCK:
+        sessions = _read()["sessions"]
+        rows = [{"id": _session_ref(k), "current": k == mine, "browser": v.get("browser") or "A browser signed in before this list was kept",
+                 "created_at": v.get("created_at") or "", "last_seen_at": v.get("last_seen_at") or ""}
+                for k, v in sessions.items()
+                if v.get("user_id") == user_id and v["expires_at"] > now and not _idle(v, moment)]
+    rows.sort(key=lambda r: r["last_seen_at"], reverse=True)
+    return [r for r in rows if r["current"]] + [r for r in rows if not r["current"]]
+
+
+def end_sessions(user_id: str, current_token: str | None, only: str | None = None) -> int:
+    """Sign this person out of their other sessions (L2), or only the one with list id `only`.
+    The session making the request stays. Returns how many ended."""
+    mine = _digest(current_token) if isinstance(current_token, str) and current_token else ""
+    with LOCK:
+        data = _load()
+        gone = [k for k, v in data["sessions"].items()
+                if v.get("user_id") == user_id and k != mine and (only is None or _session_ref(k) == only)]
+        for k in gone:
+            data["sessions"].pop(k, None)
+        if gone:
+            _save(data)
+    return len(gone)
 
 
 def destroy_session(token: str | None) -> None:
@@ -774,11 +828,14 @@ def _take_code(data: dict[str, Any], kind: str, user_id: str, code: Any) -> bool
     return True
 
 
-def _check_password(password: Any) -> str:
+def _check_password(password: Any, email: str = "", name: str = "") -> str:
     if not isinstance(password, str) or len(password) < MIN_PASSWORD:
         raise AuthError(f"Password must be at least {MIN_PASSWORD} characters.")
     if len(password) > 1000:
         raise AuthError("Password is too long.")
+    why = passwords.problem(password, email, name)   # common ones, runs, the person's own email (L3)
+    if why:
+        raise AuthError(why)
     return password
 
 
@@ -825,6 +882,7 @@ def reset_password(raw: Any, password: Any) -> dict[str, Any]:
         user = next((u for u in data["users"] if u["id"] == entry["user_id"]), None)
         if not user:
             raise AuthError("This account no longer exists.")
+    _check_password(password, user["email"], user.get("name", ""))
     salt, digest = _hash(password)  # outside the lock: hashing is slow on purpose
     with LOCK:
         data = _load()
@@ -889,6 +947,7 @@ def change_password(user_id: str, current: Any, new: Any, keep_session: str | No
             raise AuthError("Current password is wrong.")
         if user["company_id"] == DEMO_COMPANY_ID:
             raise AuthError("The demo account's password can't be changed.")
+        _check_password(new, user["email"], user.get("name", ""))
         now = time.monotonic()
         _throttle(user["email"], None, now)
         _failed(user["email"], None, now)
@@ -912,16 +971,20 @@ def change_password(user_id: str, current: Any, new: Any, keep_session: str | No
         _save(data)
 
 
-def verify_email_token(user_id: str) -> str:
+def verify_email_token(user_id: str, signs_in: bool = False) -> str:
+    """A confirmation link. signs_in: the link that finishes a sign-up (L3) also signs the new
+    account in, once; a link sent again from My account only confirms."""
     with LOCK:
         data = _load()
         data["tokens"] = {k: v for k, v in data["tokens"].items() if not (v["kind"] == "verify" and v.get("user_id") == user_id)}
-        raw = _new_token(data, "verify", user_id=user_id)
+        raw = _new_token(data, "verify", user_id=user_id, **({"signs_in": True} if signs_in else {}))
         _save(data)
         return raw
 
 
-def verify_email(raw: Any) -> dict[str, Any]:
+def verify_email(raw: Any, signing_in: list | None = None) -> dict[str, Any]:
+    """Confirm the email the link was sent to. signing_in, a list, gets True appended when the
+    link is the one that finishes a sign-up and the account has no two-step app (L3)."""
     with LOCK:
         data = _load()
         key, entry = _find_token(data, "verify", raw)
@@ -934,7 +997,15 @@ def verify_email(raw: Any) -> dict[str, Any]:
         user["email_verified"] = True
         user["verified_at"] = _iso(_utcnow())
         _save(data)
+        if signing_in is not None and entry.get("signs_in") and not user.get("two_step"):
+            signing_in.append(True)
         return _public(user)
+
+
+def burn_hash_time(password: Any) -> None:
+    """As long as hashing a new password takes, for a reply that must not show whether an
+    account was made (L3)."""
+    _hash(str(password or "")[:1000])
 
 
 # ---------- team ----------
@@ -1067,6 +1138,7 @@ def accept_invite(raw: Any, name: Any, password: Any, terms_version: str | None 
         key, entry = _find_token(_load(), "invite", raw)
     if not key:
         raise AuthError("This invite is invalid or has expired. Ask for a new one.")
+    _check_password(password, entry["email"], name)
     salt, digest = _hash(password)
     with LOCK:
         data = _load()

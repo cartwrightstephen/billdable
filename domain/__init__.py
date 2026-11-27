@@ -969,6 +969,7 @@ def payer_link(invoice: dict[str, Any], link_base: str | None, company_id: str) 
         return ""
     if not invoice.get("payer_token"):
         invoice["payer_token"] = secrets.token_urlsafe(24)
+    invoice["payer_link_at"] = utcnow()   # each email with the link renews it (L2, payer_page.link_days)
     return f"{link_base.rstrip('/')}/p/{company_id}.{invoice['payer_token']}"
 
 
@@ -4330,6 +4331,7 @@ def request_co_signature(
         raise GateError(NO_SIGNING_LINKS)
     co["sign_token"] = co.get("sign_token") or secrets.token_urlsafe(24)
     co["signature_requested_at"] = co_event(co, "signature_requested", actor)
+    co["sign_link_at"] = co["signature_requested_at"]   # asking again renews the link (L2)
     link = f"{link_base.rstrip('/')}/s/{company_id}.{co['sign_token']}"
     payer = _payer(state, job["payer_id"])
     if payer.get("ap_email"):

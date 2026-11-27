@@ -25,6 +25,10 @@ Every command run is written to <data dir>/admin_log.jsonl (M11): when, which co
 company, who ran it (the shell's user name) and how it ended. The file is only ever appended to;
 an email is kept as a short hash, never the address. A command that changes something also posts
 an alert to ALERT_WEBHOOK_URL, so the other founder hears of it.
+
+A command run while the server is up takes the same company and accounts locks as the server
+(they hold across processes, M7), so the two take turns; a company the server changed after
+the command read it is refused with "changed at the same moment", and the command can be run again.
 """
 
 from __future__ import annotations
@@ -42,6 +46,7 @@ import migrations
 import monthly
 import server
 import storage
+import store
 
 # The commands that change something: each is logged and alerted. The others are only logged.
 CHANGES = {"delete-company", "end-sessions", "monthly-summaries", "read-only", "writable", "partner", "migrate-all", "two-step-off"}
@@ -236,5 +241,13 @@ def _run(cmd: str, args: list[str]) -> int:
     return 0
 
 
+def run(argv: list[str]) -> int:
+    try:
+        return main(argv)
+    except store.ChangedElsewhere:
+        print("The company was changed at the same moment by the server. Nothing was saved by this command; run it again.")
+        return 1
+
+
 if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+    sys.exit(run(sys.argv))

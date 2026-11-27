@@ -61,7 +61,7 @@ MAX_PAGES = 20       # 20,000 rows per read is far beyond a small contractor's 9
 TIMEOUT = 20
 STATE_MINUTES = 10
 
-LOCK = threading.Lock()
+LOCK = storage.ProcessLock(lambda: Path(storage.DATA_DIR) / ".qbo_connections.json.lock")  # across processes too (M7)
 _REFRESH_LOCK = threading.Lock()   # one refresh at a time: Intuit retires a refresh token once used
 _PENDING: dict[str, dict[str, Any]] = {}   # OAuth state -> {company_id, user, user_id, until}
 

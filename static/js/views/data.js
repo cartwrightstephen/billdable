@@ -132,8 +132,9 @@ export const views = {
       <h1>Export</h1>
       <div class="card" id="export-everything">
         <h2>Everything (one file)</h2>
-        ${owner ? `<p class="sub">Every job, client, record and email in your company, as one file.</p>
-        <a class="btn secondary" href="/api/export" download>Download everything</a>`
+        ${owner ? `<p class="sub">Every job, client, record and email in your company, as one file. With the uploaded files too (photos, PDFs, waivers, payroll), it is a .zip and can be large.</p>
+        <div class="form-inline"><a class="btn secondary" href="/api/export" download>Download everything</a>
+        <a class="btn secondary" href="/api/export/with-files.zip" download>Everything with files (.zip)</a></div>`
         : `<p class="sub">An owner can download everything in the company as one file.</p>`}
       </div>
       <div class="card" id="export-lists">

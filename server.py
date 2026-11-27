@@ -87,16 +87,22 @@ PAYER_QUESTIONS_PER_HOUR = 5   # questions from one customer-page link an hour
 PAYER_QUESTIONS_PER_DAY = 20   # from all of a company's customer pages a day (the daily email limit is 50)
 _COMPANY_LOCKS: dict = {}
 _COMPANY_LOCKS_GUARD = threading.Lock()
-_DELETED_LOCK = threading.Lock()
+_DELETED_LOCK = storage.ProcessLock(lambda: _deleted_path().with_name(".deleted_companies.json.lock"))
 DISK_FREE_MIN_MB = 200   # /healthz answers 503 below this (R6-06)
 INBOUND_PER_HOUR = 120   # posts an hour to one inbound email or text address (R6-07)
 
 
-def company_lock(company_id: str) -> threading.RLock:
+def company_lock(company_id: str) -> "storage.ProcessLock":
     """One lock per company: a change loads, edits and saves under it. Companies don't wait on each other.
-    The same thread may take it again: a read that brings an old file up to date saves it under it."""
+    The same thread may take it again: a read that brings an old file up to date saves it under it.
+    It holds across processes too (M7), through a file in companies/.locks/, so admin.py run while
+    the server is up waits for the server's change instead of saving over it."""
     with _COMPANY_LOCKS_GUARD:
-        return _COMPANY_LOCKS.setdefault(company_id, threading.RLock())
+        lock = _COMPANY_LOCKS.get(company_id)
+        if lock is None:
+            lock = _COMPANY_LOCKS[company_id] = storage.ProcessLock(
+                lambda: COMPANIES / ".locks" / f"{re.sub(r'[^A-Za-z0-9_-]', '_', company_id)}.lock", reentrant=True)
+        return lock
 
 
 MAX_BODY_BYTES = 1_000_000
@@ -233,7 +239,7 @@ def demo_enabled() -> bool:
 # What a read-only company may still do (P2-2's "past due: read-only, never deletion"). The
 # read-only demo allows less: no password, two-step or team changes, or the demo locks.
 DEMO_READ_ONLY_OK = {"_p_helper_ask", "_p_helper_feedback", "_p_sov_parse", "_p_payments_csv", "_p_contract_read", "_p_ping", "_p_qty_preview"}
-COMPANY_READ_ONLY_OK = DEMO_READ_ONLY_OK | {"_p_password", "_p_password_code", "_p_two_step", "_p_my_name", "_p_my_sms", "_p_reminder_prefs", "_p_reminder_read", "_p_resend_verify", "_p_helper_admin",
+COMPANY_READ_ONLY_OK = DEMO_READ_ONLY_OK | {"_p_password", "_p_sessions_end", "_p_password_code", "_p_two_step", "_p_my_name", "_p_my_sms", "_p_reminder_prefs", "_p_reminder_read", "_p_resend_verify", "_p_helper_admin",
                                              "_p_team_invite", "_p_team_revoke", "_p_team_role", "_p_team_remove", "_p_account_delete",
                                              "_p_qbo_payments", "_p_qbo_disconnect", "_p_billing_checkout", "_p_billing_portal",
                                              "_p_appearance", "_p_profile_save", "_p_profile_delete", "_p_admin_hand_over"}
@@ -485,6 +491,31 @@ def load_company(company_id: str) -> dict:
     log_json("error", msg="company data missing", company=company_id, folder=str(COMPANIES))
     alerts.notify(f"company-missing:{company_id}", f"company data missing for {company_id}; requests answer 503 until it is restored")
     raise CompanyMissing(company_id)
+
+
+def storage_cap(company_id: str) -> int:
+    """The company's file storage cap (H5): more once it subscribes (importer.storage_cap_bytes)."""
+    try:
+        state = company_store().load(company_id)
+    except Exception:
+        state = None
+    return importer.storage_cap_bytes(state)
+
+
+importer.CAP_FOR = storage_cap
+
+UPLOADS_PER_HOUR_USER = 120     # files one person can upload an hour (H5)
+UPLOADS_PER_HOUR_COMPANY = 400  # and a whole company
+
+
+def uploads_per_hour() -> tuple:
+    """(per person, per company), from DURACASH_UPLOADS_PER_HOUR_USER / _COMPANY."""
+    def num(name: str, default: int) -> int:
+        try:
+            return max(1, int(os.environ.get(name) or default))
+        except ValueError:
+            return default
+    return num("DURACASH_UPLOADS_PER_HOUR_USER", UPLOADS_PER_HOUR_USER), num("DURACASH_UPLOADS_PER_HOUR_COMPANY", UPLOADS_PER_HOUR_COMPANY)
 
 
 def _write_back_migrated(company_id: str) -> None:
@@ -775,14 +806,70 @@ def _gate(exc: "domain.GateError") -> dict:
     return out
 
 
+HEADER_SECONDS = 20   # the request line and headers must all arrive within this long (M8)
+_BUSY_BODY = b'{"error": "The server is busy. Try again in a few seconds."}'
+BUSY_RESPONSE = (b"HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nRetry-After: 5\r\n"
+                 b"Connection: close\r\nContent-Length: " + str(len(_BUSY_BODY)).encode() + b"\r\n\r\n" + _BUSY_BODY)
+
+
+def max_connections() -> int:
+    """How many connections are served at once (DURACASH_MAX_CONNECTIONS, default 200, M8).
+    Each one is a thread; one more is answered 503 straight away and closed."""
+    try:
+        return max(4, int(os.environ.get("DURACASH_MAX_CONNECTIONS") or 200))
+    except ValueError:
+        return 200
+
+
+class _HeaderDeadlines:
+    """One watcher thread for every connection still sending its request line and headers: one
+    that hasn't finished HEADER_SECONDS after it began is shut, so a client trickling a header a
+    byte at a time can't hold a thread for long (the socket timeout alone is per read)."""
+
+    def __init__(self) -> None:
+        self._due: dict = {}
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+
+    def arm(self, conn, seconds: float) -> None:
+        with self._lock:
+            self._due[conn] = time.monotonic() + seconds
+            if self._thread is None or not self._thread.is_alive():
+                self._thread = threading.Thread(target=self._watch, name="header-deadlines", daemon=True)
+                self._thread.start()
+
+    def disarm(self, conn) -> None:
+        with self._lock:
+            self._due.pop(conn, None)
+
+    def _watch(self) -> None:
+        import socket
+        while True:
+            time.sleep(0.25)
+            now = time.monotonic()
+            with self._lock:
+                late = [c for c, due in self._due.items() if due <= now]
+                for c in late:
+                    self._due.pop(c, None)
+            for c in late:
+                try:
+                    c.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+
+_HEADER_DEADLINES = _HeaderDeadlines()
+
+
 class Server(ThreadingHTTPServer):
     daemon_threads = True
     request_queue_size = 64
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._busy = 0
         self._busy_cond = threading.Condition()
+        self._slots = threading.BoundedSemaphore(max_connections())
 
     def busy(self, delta: int) -> None:
         """Count the requests being answered (not idle kept-alive connections), for drain()."""
@@ -798,6 +885,28 @@ class Server(ThreadingHTTPServer):
                 self._busy_cond.wait(max(0.0, deadline - time.monotonic()))
             return self._busy
 
+    def process_request(self, request, client_address) -> None:
+        # At most max_connections() at once (M8); past that, a short 503 rather than one more thread.
+        if not self._slots.acquire(blocking=False):
+            try:
+                request.settimeout(2)
+                request.sendall(BUSY_RESPONSE)
+            except OSError:
+                pass
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
+
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "Duracash"
@@ -809,6 +918,18 @@ class Handler(BaseHTTPRequestHandler):
     # path with secrets removed, status, milliseconds and a request id. Never headers or cookies.
     _rid = ""
     _t0 = 0.0
+
+    def handle_one_request(self) -> None:
+        _HEADER_DEADLINES.arm(self.connection, HEADER_SECONDS)
+        try:
+            super().handle_one_request()
+        finally:
+            _HEADER_DEADLINES.disarm(self.connection)
+
+    def parse_request(self) -> bool:
+        ok = super().parse_request()   # reads the headers
+        _HEADER_DEADLINES.disarm(self.connection)
+        return ok
 
     def log_request(self, code="-", size="-") -> None:
         log_json(
@@ -1014,6 +1135,9 @@ class Handler(BaseHTTPRequestHandler):
                 # Most changes queue none: then the company isn't loaded again just to find that out.
                 queued = {e.get("id") for e in state.get("email_log", []) if e.get("status") == "queued" and e.get("id") not in waiting} \
                     if deliver and user is not None else set()
+        except store.ChangedElsewhere:
+            log_json("warn", msg="save refused: changed by another program", company=company_id, rid=self._rid)
+            return 409, {"error": store.ChangedElsewhere.MESSAGE}
         except UnknownAction:
             return 404, {"error": "Unknown action"}
         except OwnerOnly:
@@ -1103,6 +1227,7 @@ class Handler(BaseHTTPRequestHandler):
             busy(1)
         if not _FORWARDED_LOGGED.is_set():
             _note_forwarded_shape(len([p for p in (self.headers.get("X-Forwarded-For") or "").split(",") if p.strip()]), trusted_proxy_hops())
+        self._expired_link = None
         try:
             run()
         except BadRequest as exc:
@@ -1111,6 +1236,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(409, _gate(exc))
         except CompanyMissing:
             self._json(503, {"error": CompanyMissing.MESSAGE, "request_id": self._rid})
+        except store.ChangedElsewhere:
+            self._json(409, {"error": store.ChangedElsewhere.MESSAGE, "request_id": self._rid})
         except Exception:
             self._crash()
         finally:
@@ -1755,6 +1882,37 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, json.dumps(domain.without_link_secrets(state), indent=2).encode(), "application/json",
                    {"Content-Disposition": f'attachment; filename="duracash-export-{stamp}.json"'})
 
+    def _g_export_files(self, m, user) -> None:
+        """Everything with the uploaded files (L4): a zip of the export and each file. Built in a
+        temporary file and sent in pieces, so a company with gigabytes of photos never sits in memory."""
+        with company_lock(user["company_id"]):
+            state = load_company(user["company_id"])
+        if not has_perm(user, "data", state):
+            self._json(403, {"error": "Your permissions don't cover exporting the company's data."})
+            return
+        if not _within_limit(f"export-files:{user['company_id']}", 6, 3600):
+            self._json(429, {"error": "The export with files was made several times this hour. Try again later."})
+            return
+        import tempfile
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+        with tempfile.TemporaryFile() as tmp:
+            exports.write_company_archive(state, lambda meta: importer.file_path(user["company_id"], meta), tmp)
+            size = tmp.tell()
+            tmp.seek(0)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Length", str(size))
+            self.send_header("Content-Disposition", f'attachment; filename="duracash-export-with-files-{stamp}.zip"')
+            self.send_header("Cache-Control", "no-store")
+            for k, v in SECURITY_HEADERS.items():
+                self.send_header(k, v)
+            if os.environ.get("COOKIE_SECURE") == "1":
+                self.send_header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+            if self._rid:
+                self.send_header("X-Request-Id", self._rid)
+            self.end_headers()
+            shutil.copyfileobj(tmp, self.wfile, 256 * 1024)
+
     def _g_export_csv(self, m, user) -> None:
         """Jobs, pay apps, payments or change orders as a CSV file, finished jobs' too (I1). Open to
         everyone signed in, like Sent pay apps and each pay app's QuickBooks file: the same figures
@@ -1825,6 +1983,13 @@ class Handler(BaseHTTPRequestHandler):
             "mail_daily_limit": mailer.settings()["daily_limit"],
             "file_types": sorted(e.lstrip(".") for e in importer.ALLOWED_FILES),
         })
+
+    def _g_storage(self, m, user) -> None:
+        """Settings, Company: how much of the company's file storage is used (H5)."""
+        per_user, per_company = uploads_per_hour()
+        self._json(200, {"used_bytes": importer.storage_used_bytes(user["company_id"]), "cap_bytes": storage_cap(user["company_id"]),
+                         "max_file_mb": importer.MAX_FILE_BYTES // (1024 * 1024), "uploads_per_hour_user": per_user,
+                         "uploads_per_hour_company": per_company})
 
     def _g_calendar(self, m) -> None:
         company_id = importer.company_for_token(m.group(1), "calendar")
@@ -1925,7 +2090,7 @@ class Handler(BaseHTTPRequestHandler):
                 if body.get("remember") is not False:
                     cookies.append(self._device_cookie(auth.remember_device(user["id"])))
         auth.login_succeeded(user["email"])
-        session = self._set_cookie(auth.create_session(user))["Set-Cookie"]
+        session = self._set_cookie(auth.create_session(user, self.headers.get("User-Agent")))["Set-Cookie"]
         self._json(200, {"user": self._me_user(user)}, {"Set-Cookie": [session, *cookies]})
 
     def _email_code_due(self, user: dict) -> bool:
@@ -1968,6 +2133,30 @@ class Handler(BaseHTTPRequestHandler):
                 "company_admin": auth.is_company_admin(user["id"], user["company_id"]),
                 "owner_names": auth.owner_names(user["company_id"]), "texts_number": sms.settings()["from"]}
 
+    def _uniform_signup(self) -> bool:
+        """On a server that sends mail (L3), sign-up answers the same whether or not the email
+        already has an account: "check your email". A new account is signed in by the link in
+        its confirmation email; an existing one is emailed how to sign in or reset instead."""
+        return mailer.configured() and bool(app_url())
+
+    def _signup_reply(self, email: str) -> None:
+        self._json(200, {"check_email": True, "email": email,
+                         "message": f"Check your email: we sent a link to {email}. Open it to finish and sign in. It works for 3 days. "
+                                    "Nothing there? Check spam, or try again in a few minutes."})
+
+    def _send_existing_account_email(self, email: str) -> None:
+        account = auth.user_by_email(email)
+        if not account or account["company_id"] == auth.DEMO_COMPANY_ID:
+            return
+        if not _within_limit(f"signup-exists:{account['id']}", 3, 3600):
+            return
+        url = app_url()
+        self._system_email(
+            account["email"], "You already have a Duracash account",
+            f"Someone tried to create a Duracash account with {account['email']}, which already has one.\n\n"
+            f"Sign in here: {url}/\nForgot the password? Choose \"Forgot your password?\" on that page.\n\n"
+            "If it wasn't you, ignore this email; nothing about your account changed.")
+
     def _p_signup(self, m) -> None:
         body = self._read_json()
         if body.get("accept_terms") is not True:
@@ -1978,18 +2167,33 @@ class Handler(BaseHTTPRequestHandler):
         if not _local(ip) and not _within_limit(f"signup:{ip}", 5, 3600):
             self._json(429, {"error": "Too many new accounts from this network. Try again in an hour."})
             return
+        uniform = self._uniform_signup()
+        email = _text(body, "email").strip().lower()
         try:
             company_id = new_company_id()
             # Read before the account is saved: a refused name must not leave a user with no company.
             company_name = _text(body, "company_name").strip()
-            user = auth.create_user(_text(body, "email"), _text(body, "password"), _text(body, "name"), company_id,
-                                    terms_version=legal.TERMS_VERSION, reminders=auth.new_user_reminders())
+            try:
+                user = auth.create_user(_text(body, "email"), _text(body, "password"), _text(body, "name"), company_id,
+                                        terms_version=legal.TERMS_VERSION, reminders=auth.new_user_reminders())
+            except ValueError as exc:
+                if not (uniform and "already exists" in str(exc)):
+                    raise
+                # The same reply, after as long, as a new account (L3); the email says what to do.
+                auth.burn_hash_time(body.get("password"))
+                threading.Thread(target=self._send_existing_account_email, args=(email,), daemon=True).start()
+                self._signup_reply(email)
+                return
             # The company name can wait (R2-02): until it is typed in Account, it is the person's name.
             fresh = empty_state(company_name or str(user.get("name") or "").strip() or "New company")
             trial.start(fresh["company"])
             with company_lock(company_id):
                 save_company(company_id, fresh)
-            token = auth.create_session(user)
+            if uniform:
+                threading.Thread(target=self._send_verification, args=(user, True), daemon=True).start()
+                self._signup_reply(user["email"])
+                return
+            token = auth.create_session(user, self.headers.get("User-Agent"))
             verification = self._send_verification(user)
             self._json(200, {"user": self._me_user(user), "verification": verification}, self._set_cookie(token))
         except ValueError as exc:
@@ -2003,7 +2207,7 @@ class Handler(BaseHTTPRequestHandler):
         if not user:
             self._json(404, {"error": "There is no sample company on this server."})
             return
-        self._json(200, {"user": user}, self._set_cookie(auth.create_session(user)))
+        self._json(200, {"user": user}, self._set_cookie(auth.create_session(user, self.headers.get("User-Agent"))))
 
     def _p_logout(self, m) -> None:
         self._require_json()
@@ -2051,14 +2255,21 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"ok": True, "needs_code": True, "email": user["email"],
                              "message": "Password changed. Sign in with your new password and your authenticator code."})
             return
-        self._json(200, {"user": user}, self._set_cookie(auth.create_session(user)))
+        self._json(200, {"user": user}, self._set_cookie(auth.create_session(user, self.headers.get("User-Agent"))))
 
     def _p_verify(self, m) -> None:
         body = self._read_json()
+        signing_in: list = []
         try:
-            user = auth.verify_email(body.get("token"))
+            user = auth.verify_email(body.get("token"), signing_in)
         except auth.AuthError as exc:
             self._json(400, {"error": str(exc)})
+            return
+        # The link that finishes a sign-up (L3) signs the new account in, unless this browser
+        # already has someone signed in.
+        if signing_in and not self._session_user():
+            auth.login_succeeded(user["email"])
+            self._json(200, {"user": user, "signed_in": True}, self._set_cookie(auth.create_session(user, self.headers.get("User-Agent"))))
             return
         self._json(200, {"user": user})
 
@@ -2086,7 +2297,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._mutate(user["company_id"], lambda st: domain.audit(
             st, "", "team_join", f"{user['name']} ({user['email']}) joined the team as {profiles.profile_name(st, user['profile_id'])}.", user["name"]))
-        self._json(200, {"user": user}, self._set_cookie(auth.create_session(user)))
+        self._json(200, {"user": user}, self._set_cookie(auth.create_session(user, self.headers.get("User-Agent"))))
 
     def _p_inbound_email(self, m) -> None:
         self._inbound_email(m.group(1))
@@ -2287,6 +2498,25 @@ class Handler(BaseHTTPRequestHandler):
         except auth.AuthError as exc:
             self._json(400, {"error": str(exc)})
 
+    def _g_sessions(self, m, user) -> None:
+        """Settings, My account: where this person is signed in (L2). The sample company's one
+        login is shared by every visitor, so it lists only this browser."""
+        rows = auth.list_sessions(user["id"], self._token())
+        if user["company_id"] == auth.DEMO_COMPANY_ID:
+            rows = [r for r in rows if r["current"]]
+        self._json(200, {"sessions": rows})
+
+    def _p_sessions_end(self, m, ctx: "Ctx") -> None:
+        """Sign out everywhere else, or one other session ({"id": ...}); this one stays (L2)."""
+        if ctx.company_id == auth.DEMO_COMPANY_ID:
+            self._json(409, {"error": "The sample company is shared, so its other visitors stay signed in."})
+            return
+        only = _text(ctx.body, "id", limit=64) or None
+        ended = auth.end_sessions(ctx.user["id"], self._token(), only)
+        if ended:
+            log_json("info", msg="sessions ended by their owner", count=ended, rid=self._rid)
+        self._json(200, {"ended": ended, "sessions": auth.list_sessions(ctx.user["id"], self._token())})
+
     def _p_ping(self, m, ctx: "Ctx") -> None:
         """Stay signed in (G2): the session was checked, and so its last use moved to now."""
         self._json(200, {"ok": True, "idle_minutes": auth.idle_minutes()})
@@ -2374,7 +2604,7 @@ class Handler(BaseHTTPRequestHandler):
     def _system_email(self, to: str, subject: str, body: str, company_id: str = "", shared_limit: bool = True) -> str:
         return send_system_email(to, subject, body, company_id, self._rid, shared_limit=shared_limit)
 
-    def _send_verification(self, user: dict) -> str:
+    def _send_verification(self, user: dict, signs_in: bool = False) -> str:
         url = app_url()
         if user["company_id"] == auth.DEMO_COMPANY_ID:
             return "the demo account isn't verified"
@@ -2384,10 +2614,12 @@ class Handler(BaseHTTPRequestHandler):
             return EMAIL_NOT_SET_UP
         if not _within_limit(f"verify:{user['id']}", 3, 3600):
             return "three links were already sent in the last hour; use the newest, or try later"
-        raw = auth.verify_email_token(user["id"])
+        raw = auth.verify_email_token(user["id"], signs_in=signs_in)
         return self._system_email(
             user["email"], "Confirm your email for Duracash",
-            f"Hi {user['name']},\n\nConfirm that this is your email address (the link works for 3 days):\n{url}/#verify={raw}\n\n"
+            f"Hi {user['name']},\n\n" + ("Open this link to confirm your email and sign in to your new account (it works once, for 3 days):"
+                                           if signs_in else "Confirm that this is your email address (the link works for 3 days):")
+            + f"\n{url}/#verify={raw}\n\n"
             "Duracash emails your pay apps from this address's account, with replies coming back to it, "
             "so we check it first. If you didn't sign up, ignore this email.",
             company_id=user["company_id"],
@@ -2629,6 +2861,8 @@ class Handler(BaseHTTPRequestHandler):
         # A file on its way into the New job record form: that form's save fills in what it is.
         for_job_record = file_now and (query.get("for_job_record") or [""])[0] == "1"
         filename = unquote(self.headers.get("X-Filename", "") or "upload")
+        if self._upload_refused(user):
+            return
         data = self._read_raw(importer.MAX_FILE_BYTES)
         user = self._session_user()  # still signed in now the upload has arrived?
         if not user:
@@ -2700,6 +2934,20 @@ class Handler(BaseHTTPRequestHandler):
         if status == 200 and notes:
             payload = {**payload, "message": " ".join(notes)}
         self._json(status, {**payload, "uploaded_record_ids": made} if status == 200 and made else payload)
+
+    def _upload_refused(self, user: dict) -> bool:
+        """The hourly upload limits (H5), checked before the file is read: per person and per
+        company. Answers 429 and returns True when one is reached."""
+        per_user, per_company = uploads_per_hour()
+        if _within_limit(f"upload:user:{user['id']}", per_user, 3600) and _within_limit(f"upload:company:{user['company_id']}", per_company, 3600):
+            return False
+        try:
+            self._drain(int(self.headers.get("Content-Length", "0") or "0"))
+        except ValueError:
+            self.close_connection = True
+        self._json(429, {"error": f"That is a lot of uploads in one hour (the limit is {per_user} a person, {per_company} a company). "
+                                  "Nothing was saved; try again later."})
+        return True
 
     def _store_email_files(self, company_id: str, parsed: dict, actor: str, raw: bytes | None = None, raw_name: str = "") -> tuple:
         """Write an email's own file and its attachments to disk; refused attachment types are listed, not fatal."""
@@ -2873,13 +3121,16 @@ class Handler(BaseHTTPRequestHandler):
         with company_lock(company_id):
             state = load_company(company_id)
         job, invoice = payer_page.find(state, token)
+        if invoice and payer_page.link_expired(invoice, "invoice"):
+            self._expired_link = payer_page.render_expired(state)   # L2: an old link shows why
+            return None, None, None
         return (state, job, invoice) if invoice else (None, None, None)
 
     def _payer_page_get(self, company_id: str, token: str, rest: str) -> None:
         """The payer's page for one pay app (P2-4); no account, the link is the key."""
         state, job, invoice = self._payer_lookup(company_id, token)
         if not invoice:
-            self._send(404, NOT_FOUND_PAGE, "text/html; charset=utf-8")
+            self._link_missing()
             return
         private = {"Cache-Control": "no-store", "X-Robots-Tag": "noindex"}
         if rest == "/pdf" and invoice.get("status") != "void":
@@ -2903,7 +3154,7 @@ class Handler(BaseHTTPRequestHandler):
         shows the page again with why; a question is emailed to the company's owners."""
         state, job, invoice = self._payer_lookup(company_id, token)
         if not invoice:
-            self._send(404, NOT_FOUND_PAGE, "text/html; charset=utf-8")
+            self._link_missing()
             return
         fields = dict(parse_qsl(self._read_raw(8_000).decode("utf-8", "replace")))
         link = f"/p/{company_id}.{token}"
@@ -2948,7 +3199,7 @@ class Handler(BaseHTTPRequestHandler):
     def _payer_received(self, company_id: str, token: str) -> None:
         state, job, invoice = self._payer_lookup(company_id, token)
         if not invoice:
-            self._send(404, NOT_FOUND_PAGE, "text/html; charset=utf-8")
+            self._link_missing()
             return
         raw = self._read_raw(4_000)
         if demo_locked(company_id):
@@ -2976,17 +3227,24 @@ class Handler(BaseHTTPRequestHandler):
             self._send(303, b"", "text/plain", {"Location": "/communications"})
             return
         user = self._session_user()
-        data = self._read_raw(MAX_INBOUND_BYTES)
-        parsed = importer.parse_share(data, self.headers.get("Content-Type") or "")
         if not user:
-            key = None
-            if _within_limit(f"share-hold:{self._client_ip()}", SHARE_HOLDS_PER_HOUR, 3600):
-                key = importer.hold_share(parsed)
+            # Signed out (M8): counted, and refused, before the body is read, and held to one
+            # file's size rather than the signed-in limit.
+            if not _within_limit(f"share-hold:{self._client_ip()}", SHARE_HOLDS_PER_HOUR, 3600):
+                self.close_connection = True
+                self._send(303, b"", "text/plain", {"Location": "/communications", "Connection": "close"})
+                return
+            data = self._read_raw(importer.MAX_FILE_BYTES)
+            key = importer.hold_share(importer.parse_share(data, self.headers.get("Content-Type") or ""))
             headers = {"Location": "/communications"}
             if key:
                 headers.update(self._share_cookie(key))
             self._send(303, b"", "text/plain", headers)
             return
+        if self._upload_refused(user):
+            return
+        data = self._read_raw(MAX_INBOUND_BYTES)
+        parsed = importer.parse_share(data, self.headers.get("Content-Type") or "")
         if not read_only_reason(user["company_id"]):
             self._add_shared(user["company_id"], parsed)
         # Read-only: the Inbox page shows why; nothing is stored.
@@ -3046,19 +3304,30 @@ class Handler(BaseHTTPRequestHandler):
             importer.drop_share(key)
         self._json(status, payload, self._share_cookie(None) if status == 200 else None)
 
+    def _link_missing(self) -> None:
+        """A customer page or signing link that isn't there (404) or is too old (410, L2)."""
+        page = getattr(self, "_expired_link", None)
+        if page:
+            self._send(410, page.encode("utf-8"), "text/html; charset=utf-8", {"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
+            return
+        self._send(404, NOT_FOUND_PAGE, "text/html; charset=utf-8")
+
     def _co_lookup(self, company_id: str, token: str) -> tuple:
         if company_id in deleted_companies() or not company_exists(company_id):
             return None, None, None
         with company_lock(company_id):
             state = load_company(company_id)
         job, co = payer_page.find_co(state, token)
+        if co and payer_page.link_expired(co, "co"):
+            self._expired_link = payer_page.render_expired(state)
+            return None, None, None
         return (state, job, co) if co else (None, None, None)
 
     def _co_sign_page(self, company_id: str, token: str, error: str) -> None:
         """The change-order signing page (P2-3); the link is the key."""
         state, job, co = self._co_lookup(company_id, token)
         if not co:
-            self._send(404, NOT_FOUND_PAGE, "text/html; charset=utf-8")
+            self._link_missing()
             return
         page = payer_page.render_co(state, job, co, f"/s/{company_id}.{token}", error)
         self._send_compressible(200 if not error else 400, page.encode("utf-8"), "text/html; charset=utf-8",
@@ -3067,7 +3336,7 @@ class Handler(BaseHTTPRequestHandler):
     def _co_sign_post(self, company_id: str, token: str) -> None:
         state, job, co = self._co_lookup(company_id, token)
         if not co:
-            self._send(404, NOT_FOUND_PAGE, "text/html; charset=utf-8")
+            self._link_missing()
             return
         form = dict(parse_qsl(self._read_raw(4_000).decode("utf-8", "replace")))
         if demo_locked(company_id):
@@ -3451,6 +3720,8 @@ ROUTES = [
 
     # == stream: settings-auth ==
     Route("POST", r"/api/auth/ping", "_p_ping", "body"),
+    Route("GET", r"/api/auth/sessions", "_g_sessions", "user"),
+    Route("POST", r"/api/auth/sessions/end", "_p_sessions_end", "body"),
     Route("POST", r"/api/auth/password/code", "_p_password_code", "body"),
     Route("POST", r"/api/me/appearance", "_p_appearance", "body"),
     # Only the Owner profile adds, changes or deletes profiles (A4): someone who manages the
@@ -3477,6 +3748,7 @@ ROUTES = [
     Route("GET", r"/api/(outbox|audit)", "_g_log_page", "user"),
     Route("GET", r"/api/timeline", "_g_timeline", "user"),
     Route("GET", r"/api/export", "_g_export", "user"),
+    Route("GET", r"/api/export/with-files\.zip", "_g_export_files", "user"),
     Route("GET", r"/api/team", "_g_team", "user"),
     Route("GET", r"/api/metrics", "_g_metrics", "user", perm="financials"),
     Route("GET", r"/api/financials\.csv", "_g_financials_csv", "user", perm="financials"),
@@ -3488,6 +3760,7 @@ ROUTES = [
     Route("GET", r"/api/qbo/items", "_g_qbo_items", "user", perm="financials"),
     Route("GET", r"/api/qbo/customers", "_g_qbo_customers", "user", perm="financials"),
     Route("GET", r"/api/import/settings", "_g_import_settings", "user"),
+    Route("GET", r"/api/storage", "_g_storage", "user"),
     Route("GET", r"/api/files/([^/]+)", "_g_file", "user"),
     Route("GET", r"/api/jobs/([^/]+)/payapp/([^/]+)\.pdf", "_g_payapp_pdf", "user"),
     Route("GET", r"/api/jobs/([^/]+)/waiver-form/(interim|final)\.pdf", "_g_waiver_form_pdf", "user"),
@@ -4101,6 +4374,12 @@ def main() -> None:
         log_json("error", msg=f"Refusing to start: the backup before the data upgrade failed ({exc.__class__.__name__}: {exc}). "
                               "Free disk space, or restore, and deploy again.")
         alerts.notify("backup:pre-upgrade", "the backup before a data upgrade failed; the server did not start")
+        sys.exit(1)
+    # One server per data directory (M7): a second copy started on the same disk is refused.
+    try:
+        storage.claim_data_dir("server")
+    except storage.DataDirBusy as exc:
+        log_json("error", msg=f"Refusing to start: {exc}")
         sys.exit(1)
     auth.upgrade_file(migrations.AUTH_STEPS)
     if demo_enabled():

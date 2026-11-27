@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import secrets
 import threading
@@ -665,11 +666,35 @@ def handle(name: str, snap: dict[str, Any], job: dict[str, Any] | None,
 
 # ---------- answering ----------
 
+LOG_DAYS_DEFAULT = 365        # questions older than this are dropped (L4)
+LOG_MAX_BYTES = 5 * 1024 * 1024  # and the file is kept under this size, oldest first
+
+
+def _log_days() -> int:
+    try:
+        return max(1, int(os.environ.get("HELPER_LOG_DAYS") or LOG_DAYS_DEFAULT))
+    except ValueError:
+        return LOG_DAYS_DEFAULT
+
+
+def trim_log(data: list[dict[str, Any]], now: datetime | None = None) -> list[dict[str, Any]]:
+    """The helper's question log, bounded (security review L4): the newest LOG_LIMIT entries,
+    none older than HELPER_LOG_DAYS (default 365), and under LOG_MAX_BYTES written out."""
+    cutoff = ((now or datetime.now(timezone.utc)) - timedelta(days=_log_days())).replace(microsecond=0).isoformat()
+    kept = [e for e in data[-LOG_LIMIT:] if not e.get("at") or str(e["at"]) >= cutoff]
+    size = sum(len(json.dumps(e)) + 4 for e in kept)
+    start = 0
+    while size > LOG_MAX_BYTES and start < len(kept):
+        size -= len(json.dumps(kept[start])) + 4
+        start += 1
+    return kept[start:]
+
+
 def _log(entry: dict[str, Any]) -> None:
     with LOCK:
         data = json.loads(LOG_PATH.read_text()) if LOG_PATH.exists() else []
         data.append(entry)
-        storage.write_json(LOG_PATH, data[-LOG_LIMIT:])
+        storage.write_json(LOG_PATH, trim_log(data))
 
 
 def answer(question: str, state: dict[str, Any], company_id: str, user_id: str, view: str = "", context_job_id: str = "",

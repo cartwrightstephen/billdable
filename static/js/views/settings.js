@@ -214,6 +214,33 @@ export function companyChanges(values, company, switches) {
 // Settings, one page each (R6-03): Company, Team, My account and Billing (members see it read-only, R6-10).
 // Company is one form with one Save at the bottom (S1): its details, the address in four boxes
 // (S3) and the switches. Your data sits folded at the end.
+// File storage (H5): how much of the company's room uploaded files take, on Settings, Company.
+let storageInfo = null;   // {used_bytes, cap_bytes, ...} once /api/storage answers
+let storageAsked = 0;     // when it was last asked for: asked again a minute later, after uploads
+export function sizeWords(n) {
+  const gb = n / (1024 ** 3);
+  return gb >= 1 ? `${gb.toFixed(1)} GB` : `${Math.max(1, Math.round(n / (1024 ** 2)))} MB`;
+}
+export function storageHtml(info) {
+  if (!info) return `<p class="sub" id="storage-use">Files: checking how much room they take…</p>`;
+  const used = Number(info.used_bytes) || 0, cap = Number(info.cap_bytes) || 1;
+  const share = Math.min(100, Math.round((used / cap) * 100));
+  const full = used >= cap * 0.9;
+  return `<p class="sub" id="storage-use">Files: ${sizeWords(used)} of ${sizeWords(cap)} used (${share}%).
+      <progress class="storage-meter" max="100" value="${share}" aria-label="File storage used">${share}%</progress>
+      ${full ? `<span class="pill amber">Nearly full</span> Delete files you no longer need, or contact Duracash support for more room.` : ""}
+      Each file can be up to ${Number(info.max_file_mb) || 15} MB.</p>`;
+}
+async function loadStorage() {
+  storageAsked = Date.now();
+  try {
+    const res = await fetch("/api/storage");
+    if (!res.ok) return;
+    storageInfo = await readJson(res);
+  } catch (_) { return; }
+  patch("#storage-use-box", storageHtml(storageInfo));
+}
+
 function companyView() {
   const owner = can("company");
   const data = can("data");
@@ -224,6 +251,7 @@ function companyView() {
   const saved = (name) => unesc(co[name] || "");
   const lock = owner ? "" : "disabled";
   const box = (name, id, label, rule, extra = {}) => field({ form: "company", name, id, label, rule, value: saved(name), attrs: lock, ...extra });
+  if (Date.now() - storageAsked > 60_000) loadStorage();
   return `
     <h1>Company</h1>
     <div data-form-key="company">${formErrorLine("company")}
@@ -248,6 +276,7 @@ function companyView() {
     <details class="card danger-zone" data-more="danger"${formOpen.reset || moreDetails.danger ? " open" : ""}>
       <summary><strong>Your data</strong></summary>
       <h2>Your data</h2>
+      <div id="storage-use-box">${storageHtml(storageInfo)}</div>
       ${data ? `<p class="sub">Download everything in your company as one file on <a href="/data/export" data-action="nav" data-view="export">Export</a>, or start over.</p>
       <div class="form-inline">
         <button class="btn small secondary" id="reset" data-action="reset-data" aria-expanded="${!!formOpen.reset}">${isDemo ? "Reset the demo" : "Reset data"}</button>
@@ -290,8 +319,43 @@ function deleteCompanyView() {
     </div>`;
 }
 
+// Where you're signed in (L2): each live session, and Sign out everywhere else.
+let sessionList = null;   // [{id, current, browser, created_at, last_seen_at}] once /api/auth/sessions answers
+let sessionsAsked = 0;
+export function setSessionList(rows) { sessionList = rows; }
+export function sessionsCardHtml(rows = sessionList, demo = false) {
+  const others = (rows || []).filter(r => !r.current);
+  const line = (r) => `<div class="money-row"><span class="label">${r.browser}${r.current ? ` <span class="pill green">This browser</span>` : ""}</span>
+      <span>${r.last_seen_at ? `last used ${fmtDateTime(r.last_seen_at)}` : ""}${r.created_at ? `, signed in ${fmtDateTime(r.created_at)}` : ""}
+      ${r.current || demo ? "" : ` <button class="btn small secondary" data-action="session-end" data-id="${r.id}">Sign out</button>`}</span></div>`;
+  return `<div class="card" id="sessions-card">
+      <h2>Where you're signed in</h2>
+      ${rows ? rows.map(line).join("") : `<p class="sub">Loading…</p>`}
+      ${demo ? `<p class="sub">The sample company is shared, so other visitors aren't listed.</p>`
+        : others.length ? `<div class="form-inline"><button class="btn small secondary" data-action="sessions-end-others">Sign out everywhere else</button></div>`
+        : rows ? `<p class="sub">Signed in on this browser only.</p>` : ""}
+    </div>`;
+}
+async function loadSessions() {
+  sessionsAsked = Date.now();
+  try {
+    const res = await fetch("/api/auth/sessions");
+    if (!res.ok) return;
+    sessionList = escDeep((await readJson(res)).sessions || []);
+  } catch (_) { return; }
+  patch("#sessions-box", sessionsCardHtml(sessionList, me && me.company_id === DEMO_COMPANY_ID));
+}
+async function endSessions(id) {
+  const r = await postJson("/api/auth/sessions/end", id ? { id } : {});
+  if (!r.ok) { toast(r.data.error || "That didn't work."); return; }
+  sessionList = escDeep(r.data.sessions || []);
+  toast(r.data.ended === 1 ? "Signed out of 1 other session." : `Signed out of ${r.data.ended} other sessions.`);
+  patch("#sessions-box", sessionsCardHtml(sessionList, me && me.company_id === DEMO_COMPANY_ID));
+}
+
 function myAccountView() {
   const isDemo = me.company_id === DEMO_COMPANY_ID;
+  if (Date.now() - sessionsAsked > 30_000) loadSessions();
   const verified = me.email_verified
     ? `<span class="pill green">confirmed</span>`
     : `<span class="pill amber">not confirmed</span> ${mailReady ? `<button class="btn small secondary" data-action="resend-verify">Send the link again</button>` : `<span class="sub">Confirming needs email set up on the server.</span>`}`;
@@ -309,6 +373,7 @@ function myAccountView() {
     ${notificationsCardHtml()}
     ${appearanceCardHtml()}
     ${isDemo || twoStepPrompt ? "" : twoStepCardHtml()}
+    <div id="sessions-box">${sessionsCardHtml(sessionList, isDemo)}</div>
     ${me.onboarding_dismissed && !isDemo ? `<p><button class="btn small secondary" data-action="onb-show">Show the setup checklist</button></p>` : ""}
     <p class="sub">Your account id: <code>${me.id}</code></p>
     <div class="save-bar"><button class="btn" data-action="save-account">Save</button></div>
@@ -448,6 +513,7 @@ export function trialBannerHtml() {
 export function forgetSettings() {
   twoStepSetup = null; recoveryCodes = null; lastInvite = null; adminCompanies = null; switchDraft = {}; codeSentTo = ""; profileDraft = null;
   helperReview = null; helperDraft = null; auditJobFilter = "all"; auditWho = "";
+  storageInfo = null; storageAsked = 0; sessionList = null; sessionsAsked = 0;
 }
 onSessionEnd(forgetSettings);
 
@@ -627,6 +693,8 @@ export const views = {
 export const actions = {
   "audit-who": (el) => { auditWho = el.dataset.who === "people" ? "people" : ""; render(); },
   "reset-data": () => resetData(),
+  "sessions-end-others": () => endSessions(""),
+  "session-end": (el) => endSessions(unesc(el.dataset.id || "")),
   "sms-resend": async () => {
     const r = await postJson("/api/auth/sms", { phone: smsCodeTo, sms_opt_in: true });
     if (!r.ok) { refuseForm("smscode", r.data.fields || { _form: r.data.error || "Not sent." }); return; }

@@ -10,6 +10,8 @@ services:
     # A persistent disk needs a paid instance; on the free plan every deploy erases all data.
     plan: starter
     branch: main
+    # Deploy only once GitHub's checks (tests, browser test, CodeQL) pass on the commit (M12).
+    autoDeployTrigger: checksPass
     healthCheckPath: /healthz
     disk:
       name: duracash-data
@@ -74,6 +76,7 @@ services:
     dockerfilePath: ./Dockerfile
     plan: free
     branch: dev
+    autoDeployTrigger: checksPass
     healthCheckPath: /healthz
     envVars:
       - key: DURACASH_ENV

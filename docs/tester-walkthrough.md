@@ -119,13 +119,17 @@ Retainage 10% holds back $3,620.00, so the pay app asks for **$32,580.00**.
    - **Your name**: your own first and last name
    - **Company name**: `Peachtree Current Electric`
    - **Email**: `alex+tester@example.com` (your address with `+tester`)
-   - **Password**: anything of 10 characters or more
+   - **Password**: 10 characters or more, and not a common one (`password123` and the like are refused)
 3. Tick **I agree to the Terms of Service and the Privacy Policy.** and tap **Create account**.
-4. You are on the **Dashboard**, with a card called **Get your first pay app out**, "0 of 5 steps
-   done".
-5. Open your inbox. Find "Confirm your email for Duracash" and open its link. The yellow
-   "Email not confirmed" line at the top of Duracash goes away. No email after a few minutes?
-   Tap **Send the link again** on that line, and check that your address is on the allow-list.
+4. The page says "Check your email: we sent a link to …". On a server that sends email it says
+   this whether or not the address already has an account, so nobody can use the form to find
+   out who is registered. Open your inbox, find "Confirm your email for Duracash" and open its
+   link: you are signed in, on the **Dashboard**, with a card called **Get your first pay app
+   out**, "0 of 5 steps done". No email after a few minutes? Check that your address is on the
+   allow-list, then create the account again (an address that already has one gets "You already
+   have a Duracash account" instead, with how to sign in).
+5. On a server without email, Create account signs you in at once and the yellow "Email not
+   confirmed" line stays until a link can be sent.
 
 ## Step 2. Company details
 
