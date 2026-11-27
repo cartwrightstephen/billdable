@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 import auth
 import delivery
 import domain
+import gcforms
 import importer
 import mailer
 import payapp_pdf
@@ -103,6 +104,23 @@ def deliver_queued(site, company_id: str, user: dict, only: set | None = None, r
                     e["status"] = "failed: the pay app PDF could not be made; see the server log"
                     e["failed_at"] = now.isoformat(timespec="seconds")
                     continue
+                # The client's own forms, filled in (gcforms.py): with Duracash's PDF, or in its place.
+                # Only on the pay app itself and its draft for review; a retainage request keeps ours.
+                theirs, ours_too, refused = [], True, ""
+                if e.get("kind") in gcforms.EMAIL_KINDS:
+                    try:
+                        theirs, ours_too, refused = gcforms.for_email(state, company_id, e["job_id"], e["payapp_invoice_id"])
+                    except Exception:
+                        site.log("error", msg="client form fill failed", rid=rid, trace=traceback.format_exc())
+                        refused = "the client's own form couldn't be filled; see the server log"
+                if refused:
+                    e["status"] = f"failed: {refused}"[:300]
+                    e["failed_at"] = now.isoformat(timespec="seconds")
+                    continue
+                if theirs and not ours_too:
+                    attach.pop(0)
+                for k, item in enumerate(theirs):
+                    attach.insert(k, item)
             work.append((dict(e), attach))
         company_name = state.get("company", {}).get("name", "")
         inbound = site.inbound(company_id)

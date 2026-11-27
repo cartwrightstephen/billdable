@@ -11,6 +11,7 @@ import { termText } from "../terms.js";
 import { state, me, formOpen, onSessionEnd } from "../state.js";
 import { post, render, emptyState, can, nav, moreDetails, fileLink } from "../app-core.js";
 import { approverBoxes, approverIds, approverNames, ownersLine, forgetApprovers } from "../approvers.js";
+import { clientFormsHtml } from "./gcforms.js";
 import { sameCustomerBox, showSameCustomer, hideSameCustomer, keptNames, deletePayerHtml, payerJobCount, contractImportHtml, contractMark, forgetClosedContract } from "./jobs.js";
 
 // Who approves this client's pay apps before they go (Stephen, 10 Nov, decision 8): the company's
@@ -282,6 +283,7 @@ export const views = {
             <button type="button" class="btn full-width" data-action="save-playbook" data-id="${p.id}">Save client</button>
           </div>` : clientReadOnlyHtml(p, key, f)}
           ${clientApproversHtml(p, edits)}
+          ${clientFormsHtml(p, open, edits)}
           ${edits && others.length ? `<details class="merge-payer">
             <summary>Same client as another one?</summary>
             <div class="form-inline">

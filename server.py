@@ -54,6 +54,7 @@ import mail_events
 import mailer
 import metrics
 import financials
+import gcforms
 import migrations
 from domain import profiles
 import monthly
@@ -3206,7 +3207,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         private = {"Cache-Control": "no-store", "X-Robots-Tag": "noindex"}
         if rest == "/pdf" and invoice.get("status") != "void":
-            pdf, name = payapp_pdf.for_invoice(state, job["id"], invoice["id"])
+            pdf, name = gcforms.payer_pdf(state, company_id, job, invoice)   # their own form, when that is all they get
+            if not pdf:
+                pdf, name = payapp_pdf.for_invoice(state, job["id"], invoice["id"])
             self._send(200, pdf, "application/pdf", {**private, "Content-Disposition": f'inline; filename="{name}"'})
         elif rest.startswith("/file/") and invoice.get("status") != "void":
             file_id = rest.rsplit("/", 1)[-1]
@@ -3815,6 +3818,124 @@ class Handler(BaseHTTPRequestHandler):
         self._serve_file(user["company_id"], state, doc["file_id"])
 
 
+    # ----- the client's own forms (gcforms.py) -----
+
+    def _client_forms_reply(self, company_id: str, payer_id: str, user: dict) -> dict:
+        with company_lock(company_id):
+            state = load_company(company_id)
+        return gcforms.client_view(state, payer_id, admin=is_helper_admin(user))
+
+    def _g_client_forms(self, m, user) -> None:
+        try:
+            self._json(200, self._client_forms_reply(user["company_id"], m.group(1), user))
+        except domain.GateError as exc:
+            self._json(404, {"error": str(exc)})
+
+    def _p_client_form_upload(self, m, user) -> None:
+        """A client's blank form, as the raw body with its name in X-Filename (as the job page's
+        uploads). Read and stored before the company's lock; removed again if it is refused."""
+        payer_id, form_type = m.group(1), m.group(2)
+        if form_type not in gcforms.FORM_TYPES:
+            self._json(404, {"error": "Not found"})
+            return
+        filename = unquote(self.headers.get("X-Filename", "") or "form.pdf")
+        data = self._read_raw(importer.MAX_FILE_BYTES)
+        user = self._session_user()   # still signed in, and still allowed, now the upload is here?
+        if not user:
+            self._json(401, self._signed_out())
+            return
+        if not has_perm(user, "company"):
+            self._json(403, {"error": NO_PERMISSION})
+            return
+        actor = user.get("name") or user.get("email") or "owner"
+        company_id = user["company_id"]
+        name = importer.safe_name(filename)
+        if not name.lower().endswith(".pdf"):
+            name = (name.rsplit(".", 1)[0] if "." in name else name) + ".pdf"
+        try:
+            info = gcforms.read_upload(data)
+            meta = importer.store_bytes(company_id, name, data, actor)
+        except domain.GateError as exc:
+            self._json(409, _gate(exc))
+            return
+        admin = is_helper_admin(user)
+        status, payload = self._mutate(company_id, lambda st: gcforms.add_template(st, payer_id, form_type, meta, info, actor, duracash=admin), user)
+        if status != 200:
+            importer.discard(company_id, [meta])
+            self._json(status, payload)
+            return
+        self._json(200, {**payload, "client_forms": self._client_forms_reply(company_id, payer_id, user)})
+
+    def _m_client_form_match(self, state: dict, m, ctx: "Ctx") -> None:
+        gcforms.save_mapping(state, m.group(1), m.group(2), ctx.body, ctx.actor)
+        ctx.reply["client_forms"] = gcforms.client_view(state, m.group(1), admin=is_helper_admin(ctx.user))
+
+    def _m_client_form_note(self, state: dict, m, ctx: "Ctx") -> None:
+        if not is_helper_admin(ctx.user):
+            raise OwnerOnly()   # only the Duracash team says it set a form up
+        gcforms.set_note(state, m.group(1), m.group(2), _text(ctx.body, "note", limit=gcforms.MAX_NOTE), ctx.actor)
+        ctx.reply["client_forms"] = gcforms.client_view(state, m.group(1), admin=True)
+
+    def _m_client_form_retire(self, state: dict, m, ctx: "Ctx") -> None:
+        gcforms.retire(state, m.group(1), m.group(2), ctx.actor)
+        ctx.reply["client_forms"] = gcforms.client_view(state, m.group(1), admin=is_helper_admin(ctx.user))
+
+    def _m_client_form_send(self, state: dict, m, ctx: "Ctx") -> None:
+        gcforms.set_send(state, m.group(1), _text(ctx.body, "send"), ctx.actor)
+        ctx.reply["client_forms"] = gcforms.client_view(state, m.group(1), admin=is_helper_admin(ctx.user))
+
+    def _g_client_form_pdf(self, m, user) -> None:
+        """The blank as uploaded, or a preview with made-up values (?grid=1: a half-inch grid to
+        read positions off; fields filled are outlined)."""
+        with company_lock(user["company_id"]):
+            state = load_company(user["company_id"])
+        tpl = next((t for t in gcforms.templates(state, m.group(1), active_only=False) if t["id"] == m.group(2)), None)
+        if not tpl:
+            self._json(404, {"error": "That form isn't set up for this client."})
+            return
+        name = re.sub(r"[^A-Za-z0-9._-]", "-", f"{tpl['form_type']}-v{tpl['version']}-{m.group(3)}") + ".pdf"
+        try:
+            if m.group(3) == "blank":
+                pdf = gcforms.blank_bytes(user["company_id"], tpl)
+            else:
+                values, rows = gcforms.sample_values(state, m.group(1))
+                grid = (parse_qs(urlparse(self.path).query).get("grid") or [""])[0] == "1"
+                pdf, _ = gcforms.fill_template(user["company_id"], tpl, values, rows, grid=grid, boxes=grid)
+        except OSError:
+            self._json(404, {"error": "The client's blank form is missing from storage. Upload it again."})
+            return
+        except domain.GateError as exc:
+            self._json(409, {"error": str(exc)})
+            return
+        self._send(200, pdf, "application/pdf", {"Content-Disposition": f'inline; filename="{name}"', "Cache-Control": "no-store"})
+
+    def _g_payapp_client_forms(self, m, user) -> None:
+        with company_lock(user["company_id"]):
+            state = load_company(user["company_id"])
+        try:
+            self._json(200, gcforms.payapp_view(state, m.group(1), m.group(2)))
+        except domain.GateError as exc:
+            self._json(404, {"error": str(exc)})
+
+    def _g_payapp_client_form_pdf(self, m, user) -> None:
+        """One pay app, or a lien waiver for it, filled in on the client's form: the preview
+        before sending, and the waiver to print and sign."""
+        if m.group(3) not in gcforms.FORM_TYPES:
+            self._json(404, {"error": "Not found"})
+            return
+        with company_lock(user["company_id"]):
+            state = load_company(user["company_id"])
+        try:
+            pdf, name, problems = gcforms.for_invoice(state, user["company_id"], m.group(1), m.group(2), m.group(3))
+        except domain.GateError as exc:
+            self._json(409, {"error": str(exc)})
+            return
+        if not pdf:
+            self._json(404, {"error": problems[0] if problems else "Not found"})
+            return
+        self._send(200, pdf, "application/pdf", {"Content-Disposition": f'inline; filename="{name}"', "Cache-Control": "no-store"})
+
+
 # DocuSign's handlers (docusign_http.py) join the request handler.
 docusign_http.install(Handler, sys.modules[__name__])
 
@@ -3872,6 +3993,15 @@ ROUTES = [
 
     # == stream: jobs-clients ==
     Route("GET", r"/api/payers/([^/]+)/jobs", "_g_payer_jobs", "user"),
+    Route("GET", r"/api/payers/([^/]+)/client-forms", "_g_client_forms", "user"),
+    Route("GET", r"/api/payers/([^/]+)/client-forms/(gcf-[0-9a-f]{10})/(blank|sample)\.pdf", "_g_client_form_pdf", "user"),
+    Route("POST", r"/api/payers/([^/]+)/client-forms/upload/([a-z_]+)", "_p_client_form_upload", "user", perm="company"),
+    Route("POST", r"/api/payers/([^/]+)/client-forms/(gcf-[0-9a-f]{10})/match", "_m_client_form_match", "mutate", perm="company"),
+    Route("POST", r"/api/payers/([^/]+)/client-forms/(gcf-[0-9a-f]{10})/note", "_m_client_form_note", "mutate"),
+    Route("POST", r"/api/payers/([^/]+)/client-forms/(gcf-[0-9a-f]{10})/retire", "_m_client_form_retire", "mutate", perm="company"),
+    Route("POST", r"/api/payers/([^/]+)/client-forms/send", "_m_client_form_send", "mutate", perm="company"),
+    Route("GET", r"/api/jobs/([^/]+)/payapp/([^/]+)/client-forms", "_g_payapp_client_forms", "user"),
+    Route("GET", r"/api/jobs/([^/]+)/payapp/([^/]+)/client-form/([a-z_]+)\.pdf", "_g_payapp_client_form_pdf", "user"),
     Route("GET", r"/api/jobs/([^/]+)/archive/job-file\.zip", "_g_job_archive", "user", perm="sensitive_docs"),
     Route("POST", r"/api/contract/read", "_p_contract_read", "user"),
 
@@ -4226,6 +4356,10 @@ def _send_payapp(h, st, j, i, c):
     if override and c.user.get("role", "owner") != "owner":
         raise domain.GateError("Only an owner can send a pay app with an unconditional waiver attached.")
     soft = c.body.get("soft_checks")
+    # A client whose emails carry their own form: refused while that form can't be filled right.
+    on_their_form = gcforms.send_problems(st, j)
+    if on_their_form:
+        raise domain.GateError(on_their_form[0] + (f" ({len(on_their_form) - 1} more on the pay app page.)" if len(on_their_form) > 1 else ""))
     return domain.approve_and_send(st, j, c.actor, unconditional_override=override, reviewed=_text(c.body, "reviewed"),
                                    read_file=_file_reader(c.company_id, c.read_ahead), soft_checks=soft if isinstance(soft, dict) else None,
                                    today=_text(c.body, "today"), **_co_args(c))
