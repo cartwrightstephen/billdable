@@ -39,6 +39,8 @@ from email.utils import formatdate, make_msgid
 from pathlib import Path
 from typing import Any, Callable
 
+import delivery
+
 # Plain addresses only. Characters such as ( : ] change how a header is parsed, so the
 # address shown in the Outbox could differ from the one the mail server is given.
 EMAIL_RE = re.compile(r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$")
@@ -146,8 +148,13 @@ def build_message(
     cfg: dict[str, Any],
     sender_name: str | None = None,
     inbound: str = "",
+    only_to: str = "",
+    pixel_url: str = "",
 ) -> tuple[EmailMessage, list[str]]:
-    """Return the message and a list of attachments left off (with the reason)."""
+    """Return the message and a list of attachments left off (with the reason).
+    only_to: this copy goes to that one address of the email (its headers still show who else
+    got it), for open tracking, where each address gets its own image (delivery.py).
+    pixel_url: the tracking image's address; an HTML part with the same text carries it."""
     to = _clean_header(entry.get("to", ""), 254)
     if not EMAIL_RE.match(to):
         raise ValueError(f"the address {to!r} is not a valid email address")
@@ -168,6 +175,7 @@ def build_message(
     msg["Subject"] = _clean_header(entry.get("subject", ""), 250)
     msg["Date"] = formatdate(localtime=False)
     msg["Message-ID"] = make_msgid(domain=domain or None)
+    _provider_headers(msg, cfg)
     left_off: list[str] = []
     attached: list[tuple[str, bytes]] = []
     total = 0
@@ -187,13 +195,31 @@ def build_message(
     if left_off:
         body += "\n\nNot attached: " + "; ".join(left_off) + ". Ask us for these if you need them."
     msg.set_content(body)
+    if pixel_url:
+        msg.add_alternative(delivery.html_body(body, pixel_url), subtype="html")
     for name, data in attached:
         maintype, subtype = _mime(name)
         msg.add_attachment(data, maintype=maintype, subtype=subtype, filename=_clean_header(name, 120))
     # The envelope recipients are given explicitly, never re-read from the headers.
-    msg.recipients = [to] + cc  # type: ignore[attr-defined]
+    msg.recipients = [only_to] if only_to else [to] + cc  # type: ignore[attr-defined]
     msg.held_copies = [f"{a} (not on this server's allow-list)" for a in held]  # type: ignore[attr-defined]
     return msg, left_off
+
+
+def _provider_headers(msg: EmailMessage, cfg: dict[str, Any]) -> None:
+    """Our Message-ID, in the form the provider hands back on its delivery and open events, so
+    mail_events.py finds the email (Postmark returns its own MessageID, and SendGrid's open
+    events carry no smtp-id). Only for the provider SMTP_HOST names; other servers get nothing.
+      Postmark: an X-PM-Metadata-<key> header comes back in the webhook's "Metadata"
+        (https://postmarkapp.com/developer/user-guide/send-email-with-smtp).
+      SendGrid: X-SMTPAPI "unique_args" come back as fields of every event
+        (https://www.twilio.com/docs/sendgrid/for-developers/sending-email/unique-arguments)."""
+    host = str(cfg.get("host") or "").lower()
+    ours = str(msg["Message-ID"] or "").strip("<>")
+    if "postmark" in host:
+        msg["X-PM-Metadata-duracash-message-id"] = ours
+    elif "sendgrid" in host:
+        msg["X-SMTPAPI"] = json.dumps({"unique_args": {"duracash_message_id": ours}})
 
 
 def invite_email(inviter: str, inviter_email: str, company_name: str, role: str, link: str) -> tuple[str, str]:

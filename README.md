@@ -224,7 +224,9 @@ Tests write to a temporary directory, never to `data/`. GitHub Actions (`.github
 - `exports.py`, `job_archive.py`: the CSV lists and a finished job's zip
 - `payapp_pdf.py`: the pay app PDF
 - `docusign.py`, `docusign_http.py`: DocuSign eSignature: the connection, envelopes, the Connect webhook and filing what comes back signed
+- `delivery.py`: what became of each email at each address (sent, delivered, opened, bounced) and the optional open-tracking image; `mail_events.py` reads the provider's webhooks into it
 - `trial.py`: trial status
+- `domain/paydate.py`: each client's days to paid and the predicted pay date of an open pay app; `domain/revise.py`: Revise, a sent pay app back to a draft with a snapshot of what went
 - `backup.py`: backups and restore
 - `offsite.py`: encrypted off-site copies of backups (age, S3-compatible upload)
 - `alerts.py`: crash and backup-failure alerts to a webhook

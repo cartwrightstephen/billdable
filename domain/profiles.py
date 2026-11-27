@@ -92,6 +92,7 @@ JOB_ACTION_PERMS: dict[str, str | None] = {
     "accept-short-pay": "void",
     "void-draft": "void",
     "void-sent": "void",
+    "revise": "void",   # back to a draft, as Pull back is (domain/revise.py)
     "delete": "void",
     "close": "close_jobs",
     "reopen": "close_jobs",

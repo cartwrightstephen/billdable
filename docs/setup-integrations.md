@@ -28,6 +28,8 @@ Try everything on `duracash-staging` first. Staging has `DURACASH_ENV=staging`, 
 - Bounce webhook: `https://<site>/api/mail-events/<MAIL_EVENTS_TOKEN>`, or with `MAIL_EVENTS_PASSWORD`
   set, `https://duracash:<MAIL_EVENTS_PASSWORD>@<site>/api/mail-events/<MAIL_EVENTS_TOKEN>`
   (Postmark and SendGrid both take a user name and password in the webhook address).
+- Delivery status (optional): send the provider's delivery and open events to the same address, so the Outbox and each pay app show Delivered and Opened per address. Postmark: turn on the Delivery webhook, and the Open webhook if you want opens, on the server's outbound stream. SendGrid: in the Event Webhook, tick Delivered and Opened beside Bounced, Dropped and Spam Reports. With `SMTP_HOST` naming the provider, each email carries its own Message-ID back to us (`X-PM-Metadata-duracash-message-id` for Postmark, `X-SMTPAPI` unique args for SendGrid). Duracash's emails are plain text, so the provider's own open tracking finds nothing to track; opens come from the company's own setting below.
+- Open tracking is a company setting (Settings, Company, **Track when emails are opened**), off unless an owner turns it on. It needs `DURACASH_URL`: each address gets its own copy with a 1x1 image from `https://<site>/o/...gif`. Mail programs that load images ahead (Apple Mail Privacy Protection) show Opened early; ones that block images never show it.
 - Inbound email, if used: an owner copies the address from Communications, Inbox.
 
 **Who to list on staging.** List everyone who signs in to test, as well as anyone who should receive test mail. A person off the list gets no confirmation link, so their own emails stay unsent until they are listed. Outside production they sign in without an emailed code, and they can't get the code that changes a password.
@@ -41,6 +43,7 @@ Try everything on `duracash-staging` first. Staging has `DURACASH_ENV=staging`, 
 5. Add that address to the list, then press Send again in the Outbox. It should arrive.
 6. Check that the message isn't in spam, and that its headers show SPF and DKIM passing.
 7. Send to an address that doesn't exist. The Outbox row should turn "bounced" if the bounce webhook is set.
+8. With the delivery events on, send a pay app with a copy address. Its row should show Delivered for each address. Turn on open tracking, send again, open it, and the address should show Opened. Press **Resend to this recipient** on one address: only that address should get it.
 
 ## Texts (Twilio)
 

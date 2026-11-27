@@ -7,6 +7,7 @@ import { CLIENT_TYPES, clientTypeLabel, paperworkChoices, packetChoices, packetT
 import { checkFields } from "../validate.js";
 import { readJson } from "../net.js";
 import { pathFor } from "../routes.js";
+import { termText } from "../terms.js";
 import { state, me, formOpen, onSessionEnd } from "../state.js";
 import { post, render, emptyState, can, nav, moreDetails, fileLink } from "../app-core.js";
 import { approverBoxes, approverIds, approverNames, ownersLine, forgetApprovers } from "../approvers.js";
@@ -189,6 +190,16 @@ if (typeof document !== "undefined" && document.addEventListener) document.addEv
 }, true);
 
 // This module's pages, by the name their address opens (routes.js).
+// Days to paid and on-time rate (Siteline comparison, item 6; domain/paydate.py client_stats):
+// from this client's pay apps paid in full. On time: paid by its due date, or the date they gave.
+export function payStatsHtml(p) {
+  const st = p.pay_stats;
+  if (!st || !st.paid) return "";
+  const d = (n) => `${n} day${Number(n) === 1 ? "" : "s"}`;
+  const onTime = st.judged ? `On time ${st.on_time} of ${st.judged} with a due date (${st.on_time_pct}%).` : "No paid pay app had a due date to judge on time by.";
+  return `<p class="sub pay-stats">Days to paid: median ${d(st.median_days)}, average ${d(st.average_days)} (${st.paid} paid). ${termText(`${onTime} New pay apps to them are expected about ${d(st.median_days)} after they go.`)}</p>`;
+}
+
 export const views = {
   playbook() {
     forgetClosedContract();
@@ -243,6 +254,7 @@ export const views = {
               ? `Your setting says ${set}. <button class="btn small secondary" data-action="use-approval-days" data-id="${p.id}" data-days="${avg}">Use ${avg} day${avg === 1 ? "" : "s"}</button>`
               : `Your setting says ${set}.`;
           })()}</p>` : ""}
+          ${payStatsHtml(p)}
           ${edits ? `<div data-form-key="${key}">
             ${formErrorLine(key)}
             <h3>Contact and billing</h3>

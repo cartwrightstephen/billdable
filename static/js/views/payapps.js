@@ -2,7 +2,7 @@
 // payments, approval).
 // A pay app is drafted on its job's page; New pay app here asks for the job and opens that job's
 // step for it, the progress form or Draft pay app (Stephen's Oct 29 review, G10).
-import { esc, unesc, money, fmtDate, fmtDateTime, invoicePill } from "../format.js";
+import { esc, unesc, money, fmtDate, fmtDateTime, invoicePill, emailStatusHtml, words } from "../format.js";
 import { shortPayLabel, shortPayAttrs, canPullBack, openJobs, draftFromDailyOn, payAppStarts, defaultJobId, finalOverrideText } from "../jobs.js";
 import { pathFor } from "../routes.js";
 import { askConfirm, focusAfterDraw } from "../dom.js";
@@ -21,6 +21,7 @@ import { sendConfirmText } from "../payapp-text.js";
 export { sendConfirmText, deleteDraftText } from "../payapp-text.js";
 import { paymentsListHtml, qboPushHtml, qboStatus, loadQboStatus } from "./payments.js";
 import { docusignButton } from "./docusign.js";
+import { deliveryHtml, shownDelivery } from "./communications.js";
 
 let payappFilter = "all";
 let payPreselectJob = null;
@@ -67,6 +68,53 @@ function pullBackHtml(j, i) {
       <button class="btn small danger" data-action="void-sent" data-id="${j.id}" data-inv="${i.id}">Pull back ${i.number}</button>
       <button class="btn small secondary" data-action="toggle-form" data-form="${key}">Cancel</button>
     </div></div>`;
+}
+
+// Revise (domain/revise.py): back to a draft to correct it, same number, with what went kept as a
+// revision. A button, then the reason and the button that does it, as Pull back.
+function reviseHtml(j, i) {
+  const key = `revise-${i.id}`;
+  if (!formOpen[key]) return `<button class="btn small secondary" data-action="toggle-form" data-form="${key}" aria-expanded="false">${termText("Revise this pay app…")}</button>`;
+  return `<div class="revise-form" data-form-key="${key}"><h3>Revise ${i.number}</h3>
+    <p class="sub">${termText("It goes back to a draft with the same number, to correct and send again. The version that went out, its PDF and figures, stays in its history.")} ${j.payer.name || "The client"} isn't emailed until you send it again, and it needs approving again.</p>
+    ${formErrorLine(key)}<div class="form-row">
+      ${field({ form: key, name: "reason", id: `revise-reason-${i.id}`, label: "What needs correcting", required: true, placeholder: "Quantity on line 3", wide: true })}
+      <button class="btn small" data-action="revise" data-id="${j.id}" data-inv="${i.id}">Revise ${i.number}</button>
+      <button class="btn small secondary" data-action="toggle-form" data-form="${key}">Cancel</button>
+    </div></div>`;
+}
+
+// Earlier versions of a pay app sent and then revised: each one's PDF as it went and its figures.
+function revisionsHtml(inv) {
+  const revs = inv.revisions || [];
+  if (!revs.length) return "";
+  return `<div class="card payapp-revisions"><h2>Earlier versions</h2>
+    ${revs.slice().reverse().map(r => `<details class="revision" data-more="rev-${inv.id}-${r.n}"${moreDetails[`rev-${inv.id}-${r.n}`] ? " open" : ""}>
+      <summary>Revision ${r.n} · sent ${fmtDate(r.sent_at)} · ${money(r.amount_cents)} · back to draft ${fmtDate(r.at)}${r.by ? ` by ${r.by}` : ""}</summary>
+      <p class="sub">Why: ${r.reason}</p>
+      ${r.file_id ? `<p><a class="btn secondary small" href="/api/files/${r.file_id}" target="_blank" rel="noopener">Open the PDF as sent</a></p>` : `<p class="sub">Its PDF couldn't be saved.</p>`}
+      ${r.figures ? payappSummaryHtml({ figures: r.figures }) : ""}
+      ${(r.lines || []).map(l => `<div class="money-row"><span>${l.label}</span><span>${money(l.amount_cents)}</span></div>`).join("")}
+    </details>`).join("")}
+  </div>`;
+}
+
+// Every email about this pay app (the pay app, its waivers, follow-ups naming it), with what
+// became of it at each address (delivery.py), newest first.
+function emailsHtml(inv) {
+  const emails = inv.emails || [];
+  if (!emails.length) return "";
+  return `<div class="card payapp-emails"><h2>Emails</h2>
+    ${emails.map(e => `<div class="list-item payapp-email"><div><strong>${words(e.kind || "")}</strong> · ${fmtDateTime(e.at)}${e.resend_of ? ' · <span class="sub">sent again</span>' : ""}</div>
+      <div>${emailStatusHtml(e)}</div>${shownDelivery(e) ? deliveryHtml(e) : ""}</div>`).join("")}
+  </div>`;
+}
+
+// When the money should come (domain/paydate.py): the client's own history, else the terms.
+function predictedHtml(inv) {
+  const p = inv.predicted_pay;
+  if (!p) return "";
+  return `<p class="sub predicted-pay">${termText(p.text)}${p.overdue_days ? ` <span class="pill amber">${p.overdue_days} day${p.overdue_days === 1 ? "" : "s"} past expected</span>` : ""}</p>`;
 }
 
 // Pay apps' Paperwork column (R6-03, was its own tab): what is missing, linked to the list.
@@ -223,7 +271,9 @@ export const views = {
       ${backButton("job", j.name, j.id)}
       <h1>${inv.number}</h1>
       <p class="sub">${invoicePill(inv)} <a href="${pathFor("job", j.id)}" data-action="open-job" data-id="${j.id}">${j.name}</a> · ${money(inv.amount_cents)}</p>
+      ${predictedHtml(inv)}
       ${inv.sent_at && inv.status !== "void" ? undeliveredHtml(inv) : ""}
+      ${inv.revised_at && draft ? `<p class="notice revised-note">Back to a draft for revision ${fmtDate(inv.revised_at)}. Correct it, then approve and send it again.</p>` : ""}
       ${fromDaily ? `<p class="sov-daily payapp-daily">Updated from job records on ${fmtDate(fromDaily)}</p>` : ""}
       ${inv.status === "void" && inv.voided_reason ? `<p class="notice pulled-back">Pulled back ${fmtDate(inv.voided_at)}${inv.voided_by ? " by " + inv.voided_by : ""}: ${inv.voided_reason}. The client was told nothing is due on it.</p>` : ""}
       ${inv.final_override ? `<p class="override-note final-override">${finalOverrideText(inv.final_override)}</p>` : ""}
@@ -265,7 +315,10 @@ export const views = {
         ${inv.status === "partial" && inv.remaining_cents > 0 && !formOpen[`shortpay-${inv.id}`] && may("accept-short-pay") ? `<p class="sub short-pay-row">Paid short, and the rest won't come? <button class="btn small secondary" ${shortPayAttrs(j, inv)}>${shortPayLabel(inv)}</button></p>` : ""}
         ${inv.status === "partial" ? shortPayCardHtml(j, inv) : ""}
       </div>` : ""}
+      ${emailsHtml(inv)}
       ${numbersHtml(j, inv)}
+      ${revisionsHtml(inv)}
+      ${canPullBack(j, inv) && may("revise") ? `<div class="revise-row">${reviseHtml(j, inv)}</div>` : ""}
       ${canPullBack(j, inv) && may("void-sent") ? `<div class="pull-back-row">${pullBackHtml(j, inv)}</div>` : ""}
     `;
   },
@@ -415,6 +468,16 @@ export const actions = {
     if (refuseForm(key, v.reason ? {} : { reason: "Enter why you are pulling it back, like a wrong quantity on line 3." })) return;
     if (j && !(await askConfirm(`Pull back ${unesc(i ? i.number : termText("this pay app"))}? An email to ${sendsTo(j)} says it is withdrawn and nothing is due on it.`, "Pull back", true))) return;
     await post(`/api/jobs/${id}/void-sent/${inv}`, { reason: v.reason }, { formKey: key, close: key });
+  },
+  // Revise (domain/revise.py): a reason, a confirm, then it is a draft again.
+  revise: async (el, id) => {
+    const inv = el.dataset.inv, key = `revise-${inv}`;
+    const j = state.jobs.find(x => x.id === id);
+    const i = j && j.invoices.find(x => x.id === inv);
+    const v = formValues(key);
+    if (refuseForm(key, v.reason ? {} : { reason: "Enter what needs correcting, like the quantity on line 3." })) return;
+    if (j && !(await askConfirm(`Put ${unesc(i ? i.number : termText("this pay app"))} back to a draft to revise it? The version sent stays in its history. Nothing is emailed until you send it again.`, "Revise"))) return;
+    await post(`/api/jobs/${id}/revise/${inv}`, { reason: v.reason }, { formKey: key, close: key });
   },
   "open-payapp": (el) => {
     nav("payapp-detail", el.dataset.job, el.dataset.inv);

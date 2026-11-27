@@ -223,6 +223,8 @@ function companySwitchesHtml(owner) {
       ${owner ? titleWithInfo("Sending and email", "About sending", `<p>Who can send pay apps, waivers and retainage requests is set by each person's profile, on <button class="linkish" data-action="nav" data-view="team">Team</button>.</p>`) : "<h2>Sending and email</h2>"}
       ${box("daily_email", on("daily_email", co.daily_email !== false), "Daily email of what's due",
         "Each morning owners get one email listing what's due today, with a link to each. Nothing is sent on a day with nothing due.")}
+      ${box("open_tracking", on("open_tracking", co.open_tracking === true), "Track when emails are opened",
+        "Off unless you turn it on. Each address on an email gets its own copy with a tiny image; when their mail program loads it, the Outbox says Opened. Some mail programs load images for privacy or block them, so Opened can show early or never. Delivered and bounced show either way.")}
       ${owner ? "" : `<p class="sub">Your profile doesn't include changing these.</p>`}
     </div>`;
 }
