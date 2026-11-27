@@ -30,8 +30,8 @@ COMPANY = {
 
 # Permission keys as the Team page shows them (domain/profiles.py).
 PROFILES = [
-    {"name": "Office", "perms": ["send_payapps", "send_waivers", "ask_retainage", "record_payments", "financials", "company"],
-     "why": "Rosa runs billing: sends pay apps and waivers, records payments, keeps client settings."},
+    {"name": "Office", "perms": ["send_payapps", "send_waivers", "ask_retainage", "record_payments", "financials", "company", "sensitive_docs"],
+     "why": "Rosa runs billing: sends pay apps and waivers, records payments, keeps client settings, opens payroll and waivers."},
     {"name": "Project manager", "perms": ["manage_jobs", "approve_payapps", "close_jobs"],
      "why": "Marcus runs the jobs: change orders, schedule changes, signs off pay apps, finishes jobs."},
     {"name": "Field", "perms": [],

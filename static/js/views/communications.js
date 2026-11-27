@@ -7,7 +7,7 @@ import { jobFilterOptions, jobFilterShown } from "../jobs.js";
 import { moreButton } from "../dom.js";
 import { termText } from "../terms.js";
 import { state, onSessionEnd } from "../state.js";
-import { post, emptyState, listPage } from "../app-core.js";
+import { post, emptyState, listPage, fileLink } from "../app-core.js";
 
 let outboxJobFilter = "all";
 export function setOutboxJobFilter(value) { outboxJobFilter = value; }
@@ -31,7 +31,7 @@ function attachmentNames(e, files, links) {
   }
   for (const fid of e.attachments || []) {
     const f = byId.get(fid);
-    out.push(!f ? "A file no longer in the job records" : links ? `<a href="/api/files/${f.id}" target="_blank" rel="noopener">${f.name}</a>` : f.name);
+    out.push(!f ? "A file no longer in the job records" : links ? fileLink(f.id, f.name) : f.name);
   }
   return out;
 }

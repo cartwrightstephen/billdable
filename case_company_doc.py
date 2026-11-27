@@ -240,7 +240,7 @@ def render() -> str:
     words = {"send_payapps": "Send pay apps", "approve_payapps": "Approve pay apps before they go", "send_waivers": "Send lien waivers",
              "ask_retainage": "Ask for retainage", "record_payments": "Record payments", "manage_jobs": "Change a job's contract, change orders and mark work done",
              "close_jobs": "Finish and reopen jobs", "company": "Edit company details, client settings and connections",
-             "financials": "See company financials"}
+             "financials": "See company financials", "sensitive_docs": "See payroll and sensitive documents"}
     for p in cc.PROFILES:
         out.append(f"| {p['name']} | {', '.join(words[k] for k in p['perms']) or 'none'} | {p['why']} |")
     out += ["", "| Person | Job | \"Their email\" | \"Profile\" |", "|---|---|---|---|"]

@@ -3000,6 +3000,13 @@ def light_snapshot(state: dict[str, Any], now: datetime | None = None, perms: li
         jobs.append(view)
         full.append(view)
     out["jobs"] = jobs
+    # Which files take "See payroll and sensitive documents" to open (H2): the page shows their
+    # names without a link to those who don't hold it. The server refuses them either way.
+    from domain import profiles
+    sensitive = profiles.sensitive_file_ids(state)
+    for meta in out.get("files") or []:
+        if isinstance(meta, dict) and meta.get("id") in sensitive:
+            meta["sensitive"] = True
     # "First pay app to this payer" must not depend on which jobs were sent.
     sent = {j["payer_id"] for j in state["jobs"] if any(i.get("sent_at") for i in j.get("invoices", []))}
     timings = payer_timing(state)

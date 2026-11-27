@@ -592,6 +592,8 @@ export const views = {
       <div class="card"><h2>Companies</h2><p class="sub">Every company on this server, with its trial and, once Stripe is set up, its subscription. Nothing is enforced unless BILLING_ENFORCE=1.</p><div id="admin-companies">${adminCompaniesHtml()}</div></div>`;
   },
   audit() {
+    // The company's whole log takes "Export and reset data" (L1); each job's history is on its page.
+    if (!can("data")) return `<h1>Activity log</h1><p class="sub">The company's activity log needs the permission "Export and reset data". Each job's history is on its own page.</p>`;
     const page = listPage("audit", auditQuery());
     const events = page ? page.entries : [];
     return `

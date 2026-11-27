@@ -8,7 +8,7 @@ import { pathFor } from "../routes.js";
 import { askConfirm } from "../dom.js";
 import { termText } from "../terms.js";
 import { state, me, currentJobId, currentDetailId, formOpen, onSessionEnd } from "../state.js";
-import { may, can, perms, render, toast, post, load, backButton, emptyState, nav } from "../app-core.js";
+import { may, can, perms, render, toast, post, load, backButton, emptyState, nav, fileLink, mayOpenFile } from "../app-core.js";
 
 const DRAFT = ["draft", "awaiting_approval"];
 const IMAGE = /\.(jpe?g|png|gif|webp)$/i;
@@ -30,8 +30,8 @@ export function recordFileLinks(rec, files = filesById()) {
   return (rec.file_ids || []).map(fid => {
     const f = files[fid];
     if (!f) return "";
-    const pic = IMAGE.test(unesc(f.name || "")) ? `<img class="thumb" src="/api/files/${f.id}" alt="" loading="lazy">` : "";
-    return `<a class="file-link" href="/api/files/${f.id}" target="_blank" rel="noopener">${pic}${f.name}</a>`;
+    const pic = IMAGE.test(unesc(f.name || "")) && mayOpenFile(f.id) ? `<img class="thumb" src="/api/files/${f.id}" alt="" loading="lazy">` : "";
+    return fileLink(f.id, f.name, "file-link", `${pic}${f.name}`);
   }).filter(Boolean).join(" ");
 }
 
@@ -71,7 +71,7 @@ export function waiverQuestionHtml(j, rows, closeout = false) {
   return `<div class="send-warnings doc-warning waiver-questions" role="alert">
     <h3>Is this a lien waiver?</h3>
     <ul class="plain-list attach-list">${rows.map(r => `<li><span><strong>${r.label}</strong></span>
-      ${(r.file_ids || []).map((fid, n) => `<a class="btn small secondary" href="/api/files/${fid}" target="_blank" rel="noopener">Open ${(r.file_names || [])[n] || "file"}</a>`).join(" ")}
+      ${(r.file_ids || []).map((fid, n) => fileLink(fid, (r.file_names || [])[n] || "file", "btn small secondary", `Open ${(r.file_names || [])[n] || "file"}`)).join(" ")}
       ${unesc(r.guess || "") ? "" : couldntTell(r.both)}
       ${may_ ? `<span class="form-inline answer-row">${answers(r.guess).map(a => `<button class="btn small${a.picked ? "" : " secondary"}" data-action="waiver-answer" data-id="${j.id}" data-rec="${r.record_id}" data-answer="${a.v}" data-files="${(r.file_ids || []).join(" ")}"${a.picked ? ` aria-current="true"` : ""}>${a.l}</button>`).join("")}</span>` : ""}</li>`).join("")}</ul>
     ${may_ ? "" : `<p class="sub">Someone who can send pay apps answers this.</p>`}
@@ -278,7 +278,7 @@ export function beforeYouSendHtml(j, inv) {
   const addable = (j.records || []).filter(r => (r.file_ids || []).length && !going.some(g => g.rec && g.rec.id === r.id));
   const fileRow = (g) => {
     const f = files[g.fid];
-    const name = f ? `<a href="/api/files/${g.fid}" target="_blank" rel="noopener">${f.name}</a>` : g.rec.label;
+    const name = f ? fileLink(g.fid, f.name) : g.rec.label;
     const out = excluded.has(g.fid);
     const why = g.extra ? termText("added to this pay app") : `for ${g.item}`;
     const btn = !editable ? "" : g.extra && !out

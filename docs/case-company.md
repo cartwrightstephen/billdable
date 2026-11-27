@@ -33,7 +33,7 @@ Settings > Team. First add three permission profiles (only an Owner can), then i
 
 | Profile | "It can" boxes to tick | Why |
 |---|---|---|
-| Office | Send pay apps, Send lien waivers, Ask for retainage, Record payments, See company financials, Edit company details, client settings and connections | Rosa runs billing: sends pay apps and waivers, records payments, keeps client settings. |
+| Office | Send pay apps, Send lien waivers, Ask for retainage, Record payments, See company financials, Edit company details, client settings and connections, See payroll and sensitive documents | Rosa runs billing: sends pay apps and waivers, records payments, keeps client settings, opens payroll and waivers. |
 | Project manager | Change a job's contract, change orders and mark work done, Approve pay apps before they go, Finish and reopen jobs | Marcus runs the jobs: change orders, schedule changes, signs off pay apps, finishes jobs. |
 | Field | none | The crew enter job records only. Anyone on the team can do that. |
 

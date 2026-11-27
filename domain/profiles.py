@@ -37,6 +37,9 @@ PERMISSIONS: list[tuple[str, str]] = [
     ("billing", "Manage billing"),
     ("data", "Export and reset data"),
     ("financials", "See company financials"),
+    # H2 (security review, Nov 26): certified payroll, time sheets, lien waivers and contracts, and
+    # the job file zip that holds them, are opened only by those who hold this (SENSITIVE_KINDS).
+    ("sensitive_docs", "See payroll and sensitive documents"),
 ]
 PERM_KEYS = [k for k, _ in PERMISSIONS]
 PERM_WORDS = dict(PERMISSIONS)
@@ -93,6 +96,53 @@ JOB_ACTION_PERMS: dict[str, str | None] = {
 # A second permission that takes the action too: whoever asks for retainage answers the questions on
 # its request; the domain refuses it for anything that is not one (domain.Answerer).
 JOB_ACTION_ALSO: dict[str, str] = {"waiver-answer": "ask_retainage"}
+
+
+# The job record kinds whose files take "sensitive_docs" to open (H2): wages and workers' names,
+# signed releases of lien rights and the contract's terms. A ticket that is a time sheet too.
+SENSITIVE_KINDS = {"payroll", "waiver", "contract"}
+SENSITIVE_TICKETS = {"time_sheet"}
+# The profiles a company already had that do the office's paperwork get it with the upgrade (the
+# Member profile, which field crews usually hold, doesn't: an owner ticks it if they want).
+OFFICE_PERMS = {"send_payapps", "send_waivers", "ask_retainage", "financials"}
+# What an Outbox email being sent again takes (L1): the permission that sent it the first time.
+EMAIL_KIND_PERMS = {"pay_app": "send_payapps", "pay_app_withdrawn": "void", "waiver": "send_waivers", "retainage": "ask_retainage"}
+
+
+def _sensitive_record(record: dict[str, Any]) -> bool:
+    return record.get("kind") in SENSITIVE_KINDS or (record.get("kind") == "ticket" and record.get("ticket_type") in SENSITIVE_TICKETS)
+
+
+def sensitive_file_ids(state: dict[str, Any]) -> set[str]:
+    """The ids of the files that take "sensitive_docs" to open: on a job record of a sensitive kind,
+    a job's contract, or an Inbox item that reads as one."""
+    out: set[str] = set()
+    for job in state.get("jobs", []):
+        if job.get("contract_file_id"):
+            out.add(str(job["contract_file_id"]))
+        for record in job.get("records", []):
+            if _sensitive_record(record):
+                out.update(str(f) for f in record.get("file_ids") or [])
+    for item in state.get("inbox", []):
+        if item.get("kind") in SENSITIVE_KINDS or item.get("filed_kind") in SENSITIVE_KINDS:
+            out.update(str(f) for f in item.get("file_ids") or [])
+    return out
+
+
+def may_open_file(user: dict[str, Any], state: dict[str, Any], file_id: str) -> bool:
+    """Whether this person may download this file (server.py's /api/files/<id>)."""
+    return has_perm(user, "sensitive_docs", state) or file_id not in sensitive_file_ids(state)
+
+
+def grant_sensitive_docs(state: dict[str, Any]) -> None:
+    """H2: "sensitive_docs" is new, and what it gates was anyone's before. A custom profile that does
+    the office's paperwork (OFFICE_PERMS) gets it; Member and the others don't. Owner holds every
+    permission without it being stored. Safe to run again."""
+    for p in _company(state).get("profiles") or []:
+        if not isinstance(p, dict) or p.get("id") in BUILT_IN or not isinstance(p.get("perms"), list):
+            continue
+        if OFFICE_PERMS & set(p["perms"]) and "sensitive_docs" not in p["perms"]:
+            p["perms"].append("sensitive_docs")
 
 
 def _company(state: dict[str, Any]) -> dict[str, Any]:

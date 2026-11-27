@@ -314,7 +314,10 @@ class AccountHttpTests(ServerCase):
         self.assertTrue(joined["user"]["email_verified"])  # the invite link reached this address (R1-07)
         _, state = self.request("GET", "/api/state", cookie=member)
         self.assertEqual(state["company"]["name"], "Team Co")
-        _, page = self.request("GET", "/api/audit", cookie=member)
+        # The company's whole activity log takes "Export and reset data" (L1): the owner reads it.
+        res, _ = self.request("GET", "/api/audit", cookie=member)
+        self.assertEqual(res.status, 403)
+        _, page = self.request("GET", "/api/audit", cookie=owner)
         self.assertTrue(any(a["action"] == "team_join" for a in page["entries"]))
         res, _ = self.request("POST", "/api/auth/accept-invite", {"accept_terms": True, "token": token, "name": "Again", "password": "member password 1"})
         self.assertEqual(res.status, 400)

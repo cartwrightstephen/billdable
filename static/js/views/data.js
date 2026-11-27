@@ -169,7 +169,7 @@ export const views = {
       <div class="card">
         <h2>Logs</h2>
         <p><a href="/communications/outbox" data-action="nav" data-view="outbox">Outbox</a>: every email sent, with its attachments, to read or print.</p>
-        <p><a href="/settings/audit" data-action="nav" data-view="audit">Activity log</a>: every change, who made it and when.</p>
+        ${can("data") ? `<p><a href="/settings/audit" data-action="nav" data-view="audit">Activity log</a>: every change, who made it and when.</p>` : ""}
       </div>
     `;
   },

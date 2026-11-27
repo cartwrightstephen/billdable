@@ -11,7 +11,7 @@ import { moreButton, askConfirm, focusAfterDraw } from "../dom.js";
 import { field, moneyField, formErrorLine, refuseForm, formValues, formDraft, draftValue, clearForm } from "../forms.js";
 import { termText, actionWords } from "../terms.js";
 import { state, me, currentJobId, formOpen } from "../state.js";
-import { may, listPage, DEMO_COMPANY_ID, perms, post, toast, render, jobDetailLoading, jobDetailFailed, backButton, emptyState, nav, moreDetails } from "../app-core.js";
+import { may, can, listPage, DEMO_COMPANY_ID, perms, post, toast, render, jobDetailLoading, jobDetailFailed, backButton, emptyState, nav, moreDetails } from "../app-core.js";
 import { jobFields, jobFieldErrors, savedJobFields, assigneeField } from "./jobs.js";
 import { coSignControls, newCoCardHtml, coAmountText } from "./job-cos.js";
 import { sovCardHtml } from "./job-sov.js";
@@ -207,7 +207,8 @@ function archiveHtml(j) {
           <button class="btn small" data-action="save-start" data-id="${j.id}">Save start date</button></div>` : ""}
         ${row("Finished", fmtDate(j.closed_at || j.completed_at))}
         ${closeoutOverrideNote(j)}
-        <div class="form-inline"><a class="btn secondary small" href="/api/jobs/${j.id}/archive/job-file.zip" download>Download job file</a></div>
+        ${can("sensitive_docs") ? `<div class="form-inline"><a class="btn secondary small" href="/api/jobs/${j.id}/archive/job-file.zip" download>Download job file</a></div>`
+          : `<p class="sub">The job file holds the payroll and waivers, so downloading it needs the permission "See payroll and sensitive documents".</p>`}
       </div>
       <div class="card">
         <h2>${termText("Pay apps")}</h2>

@@ -1321,8 +1321,8 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"jobs": jobs})
 
     def _g_job_archive(self, m, user) -> None:
-        """The job file (J9): its record files, pay app PDFs and a summary, in one zip. Every
-        signed-in person of the company (owners and members) may download it."""
+        """The job file (J9): its record files, pay app PDFs and a summary, in one zip. It holds the
+        payroll and waivers too, so it takes "See payroll and sensitive documents" (H2, the route's perm)."""
         with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
         job = next((j for j in state.get("jobs", []) if j["id"] == m.group(1)), None)
@@ -1349,6 +1349,11 @@ class Handler(BaseHTTPRequestHandler):
     def _g_log_page(self, m, user) -> None:
         offset, limit, q = self._paging()
         key = "email_log" if m.group(1) == "outbox" else "audit"
+        # The whole company's activity log (team, billing and data changes too) is with the export (L1);
+        # a job's own history stays open to everyone on its page (/api/timeline).
+        if key == "audit" and not has_perm(user, "data"):
+            self._json(403, {"error": NO_PERMISSION})
+            return
         with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
             rows = state.get(key, [])
@@ -1557,6 +1562,10 @@ class Handler(BaseHTTPRequestHandler):
     def _g_file(self, m, user) -> None:
         with company_lock(user["company_id"]):
             state = load_company(user["company_id"])
+        # Payroll, time sheets, waivers and contracts take "See payroll and sensitive documents" (H2).
+        if not profiles.may_open_file(user, state, m.group(1)):
+            self._json(403, {"error": SENSITIVE_WORDS})
+            return
         self._serve_file(user["company_id"], state, m.group(1))
 
     def _g_payer_page(self, m) -> None:
@@ -2112,6 +2121,13 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, sov.parse_rows(_text(ctx.body, "text", limit=200_000)))
 
     def _p_outbox_retry(self, m, ctx: "Ctx") -> None:
+        # Sending an email again takes what sending it took (L1): a pay app, send_payapps; a waiver, send_waivers.
+        state = company_state(ctx.company_id)
+        entry = next((e for e in state.get("email_log", []) if e.get("id") == m.group(1)), None)
+        need = profiles.EMAIL_KIND_PERMS.get(str((entry or {}).get("kind") or ""))
+        if need and not has_perm(ctx.user, need, state):
+            self._json(403, {"error": NO_PERMISSION})
+            return
         self._json(*outbox.retry_email(SITE, ctx.company_id, ctx.user, m.group(1), self._rid))
 
     def _p_rotate(self, m, ctx: "Ctx") -> None:
@@ -3180,7 +3196,7 @@ ROUTES = [
 
     # == stream: jobs-clients ==
     Route("GET", r"/api/payers/([^/]+)/jobs", "_g_payer_jobs", "user"),
-    Route("GET", r"/api/jobs/([^/]+)/archive/job-file\.zip", "_g_job_archive", "user"),
+    Route("GET", r"/api/jobs/([^/]+)/archive/job-file\.zip", "_g_job_archive", "user", perm="sensitive_docs"),
     Route("POST", r"/api/contract/read", "_p_contract_read", "user"),
 
     # == stream: payapps-cos ==
@@ -3218,12 +3234,12 @@ ROUTES = [
     Route("GET", r"/api/timeline", "_g_timeline", "user"),
     Route("GET", r"/api/export", "_g_export", "user"),
     Route("GET", r"/api/team", "_g_team", "user"),
-    Route("GET", r"/api/metrics", "_g_metrics", "user"),
+    Route("GET", r"/api/metrics", "_g_metrics", "user", perm="financials"),
     Route("GET", r"/api/financials\.csv", "_g_financials_csv", "user", perm="financials"),
     Route("GET", r"/api/financials", "_g_financials", "user", perm="financials"),
     Route("GET", r"/api/qbo/status", "_g_qbo_status", "user"),
     Route("GET", r"/api/billing", "_g_billing", "user"),
-    Route("GET", r"/api/qbo/reconcile", "_g_qbo_reconcile", "user"),
+    Route("GET", r"/api/qbo/reconcile", "_g_qbo_reconcile", "user", perm="financials"),
     Route("GET", r"/api/qbo/callback", "_g_qbo_callback"),
     Route("GET", r"/api/import/settings", "_g_import_settings", "user"),
     Route("GET", r"/api/files/([^/]+)", "_g_file", "user"),
@@ -3533,6 +3549,8 @@ def _edit_job(h, st, j, i, c):
 # Who may do what (S6): each person's permission profile (domain/profiles.py). Every job action
 # is listed in profiles.JOB_ACTION_PERMS with the permission it needs, or None for anyone.
 NO_PERMISSION = "Your permissions don't cover that. Someone who manages the team can change them."
+SENSITIVE_WORDS = ("Opening payroll, time sheets, lien waivers and contracts needs the permission "
+                   "\"See payroll and sensitive documents\". Someone who manages the team can give it.")
 # What an owner-only route says to anyone else: only an owner can, so asking a manager won't help.
 OWNER_ONLY = {h: "Only an owner can add, change or delete permission profiles." for h in ("_p_profile_save", "_p_profile_delete")}
 
