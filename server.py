@@ -225,7 +225,7 @@ def production() -> bool:
 
 
 def demo_mode() -> str:
-    """DURACASH_DEMO: "on" (writable, the default outside production), "readonly" or "off".
+    """DURACASH_DEMO: "on" (writable, the default outside production and staging), "readonly" or "off".
     The demo's password is public, so production defaults to read-only: visitors can look
     around the sample company, and nothing can be changed, reset or locked. Set DURACASH_DEMO=off
     to remove it entirely."""
@@ -233,7 +233,10 @@ def demo_mode() -> str:
     if value in {"off", "readonly"}:
         return value
     # Default: writable outside production; readonly in production so the sample company
-    # is always available for prospects on the landing page.
+    # is always available for prospects on the landing page. Staging is public too, so its demo
+    # is read-only unless DURACASH_DEMO=on says otherwise (M9; render.yaml sets readonly as well).
+    if env_name() == "staging":
+        return "on" if value == "on" else "readonly"
     return "readonly" if production() else "on"
 
 
