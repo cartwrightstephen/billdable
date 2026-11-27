@@ -165,6 +165,22 @@ class LumpSumEarlierPayAppsTests(unittest.TestCase):
         self.assertTrue(earlier["number"].endswith("03"))
 
 
+class StartupWarningTests(unittest.TestCase):
+    """L4: production with the bounce webhook on and no password says so at start-up; it still starts."""
+    def test_the_bounce_webhook_password_warning(self):
+        import server
+        env = {"DURACASH_ENV": "production", "MAIL_EVENTS_TOKEN": "t" * 20, "MAIL_EVENTS_PASSWORD": ""}
+        with mock.patch.dict("os.environ", env):
+            (warning,) = server.startup_warnings()
+            self.assertIn("MAIL_EVENTS_PASSWORD is not set", warning)
+        with mock.patch.dict("os.environ", {**env, "MAIL_EVENTS_PASSWORD": "p" * 20}):
+            self.assertEqual(server.startup_warnings(), [])
+        with mock.patch.dict("os.environ", {**env, "MAIL_EVENTS_TOKEN": ""}):
+            self.assertEqual(server.startup_warnings(), [], "no webhook, nothing to say")
+        with mock.patch.dict("os.environ", {**env, "DURACASH_ENV": "development"}):
+            self.assertEqual(server.startup_warnings(), [])
+
+
 class ZipStateTests(unittest.TestCase):
     """Item 4: the server asks the page's question about a ZIP from another state; never refuses."""
     def test_the_question_matches_the_page(self):

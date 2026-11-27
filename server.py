@@ -4745,6 +4745,17 @@ def stop_on_sigterm(server: "Server") -> None:
     signal.signal(signal.SIGTERM, stop)
 
 
+def startup_warnings() -> list[str]:
+    """What production starts with but should be told about (L4, Nov 27 audit): the bounce webhook
+    (/api/mail-events/<MAIL_EVENTS_TOKEN>) on with only its token, no MAIL_EVENTS_PASSWORD. It stays
+    optional, as not every mail provider can send a password."""
+    out = []
+    if production() and os.environ.get("MAIL_EVENTS_TOKEN") and not os.environ.get("MAIL_EVENTS_PASSWORD"):
+        out.append("MAIL_EVENTS_PASSWORD is not set: the bounce webhook is checked by the token in its address alone. "
+                   "Set a password and give it to the mail provider as HTTP Basic auth.")
+    return out
+
+
 def main() -> None:
     # The server key (H3, vault.py): production and staging refuse to start without it; a laptop
     # makes one in the data directory.
@@ -4761,6 +4772,8 @@ def main() -> None:
     if production() and os.environ.get("DURACASH_ALLOW_NO_OFFSITE") == "1":
         for problem in recovery_problems():
             log_json("warn", msg=f"Starting anyway (DURACASH_ALLOW_NO_OFFSITE=1): {problem}")
+    for warning in startup_warnings():
+        log_json("warn", msg=warning)
     try:
         backup_before_upgrade()
     except Exception as exc:
