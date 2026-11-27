@@ -255,10 +255,17 @@ def _public(user: dict[str, Any]) -> dict[str, Any]:
         # Agreed before codes existed: texts are off until the number is confirmed.
         "sms_needs_confirming": bool(user.get("sms_opt_in")) and not _texts_on(user),
         "reminders": dict(user.get("reminders") or {}),
+        # Who on the team last set these for them, and when (Nov 26 walkthrough), or None.
+        "reminders_set_by": _set_by(user),
     }
 
 
-_OWN_ONLY = ("phone", "sms_opt_in", "sms_stopped", "sms_needs_confirming", "reminders")
+def _set_by(user: dict[str, Any]) -> dict[str, str] | None:
+    team = user.get("reminders_team")
+    return {"by": str(team.get("by") or ""), "at": str(team.get("at") or "")} if isinstance(team, dict) else None
+
+
+_OWN_ONLY = ("phone", "sms_opt_in", "sms_stopped", "sms_needs_confirming", "reminders", "reminders_set_by")
 
 
 def _listed(user: dict[str, Any]) -> dict[str, Any]:
@@ -406,6 +413,47 @@ def set_reminders(user_id: str, prefs: dict[str, list[str]]) -> dict[str, Any]:
         user["reminders"] = {**(user.get("reminders") or {}), **prefs}
         _save(data)
         return _public(user)
+
+
+# The owner, or anyone who manages the team, sets anyone's notifications (Nov 26 walkthrough): "The
+# master account will have overall ability to change any and all settings of all users including
+# notifications, but if a user makes changes then those settings will work too." So the last change
+# wins, whoever made it. What the team last set is kept beside the person's own choices
+# (reminders_team), so the Team page can show where they have changed it since. Texts still go
+# only to someone who agreed to them at a number they proved (sms.send_to_member): a Text ticked
+# for someone who hasn't waits until they do.
+def set_team_reminders(company_id: str, user_ids: list[str], prefs: dict[str, list[str]], actor_id: str,
+                       managers: Any = ("owner",)) -> list[dict[str, Any]]:
+    with LOCK:
+        data = _load()
+        actor = _require_owner(data, company_id, actor_id, managers)
+        people = []
+        for user_id in user_ids:
+            user = next((u for u in data["users"] if u["id"] == user_id and u["company_id"] == company_id), None)
+            if not user:
+                raise AuthError("That person is not on this team.")
+            if user_id == actor_id:
+                raise AuthError("Change your own notifications on My account.")
+            if _profile_of(user) == OWNER_PROFILE and _profile_of(actor) != OWNER_PROFILE:
+                raise AuthError("Only an owner can change an owner's notifications.")
+            people.append(user)
+        at = _iso(_utcnow())
+        for user in people:
+            user["reminders"] = {**(user.get("reminders") or {}), **prefs}
+            user["reminders_team"] = {"prefs": {k: list(v) for k, v in user["reminders"].items()}, "by": actor["name"],
+                                      "by_id": actor["id"], "at": at}
+        _save(data)
+        return [_public(u) for u in people]
+
+
+def team_reminders(company_id: str) -> dict[str, dict[str, Any]]:
+    """For the Team page of someone who manages the team: each person's notifications as they
+    stand, as the team last set them (None: never), and whether texts can reach them."""
+    with LOCK:
+        users = [u for u in _load()["users"] if u["company_id"] == company_id]
+        return {u["id"]: {"prefs": dict(u.get("reminders") or {}),
+                          "team": dict(u["reminders_team"]) if isinstance(u.get("reminders_team"), dict) else None,
+                          "texts_on": _texts_on(u)} for u in users}
 
 
 # Someone new (signing up, or joining by invite) gets every reminder in the app; email and text

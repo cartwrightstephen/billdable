@@ -81,7 +81,7 @@ class RouteEdgeTests(unittest.TestCase):
     def test_the_team_routes_need_manage_the_team(self):  # R6-08, S6
         team = {r.handler: r for r in server.ROUTES if r.method == "POST" and r.pattern.startswith(("/api/team", "/api/account"))}
         self.assertEqual(set(team), {"_p_team_invite", "_p_team_revoke", "_p_team_role", "_p_team_remove", "_p_account_delete",
-                                     "_p_profile_save", "_p_profile_delete", "_p_admin_hand_over"})
+                                     "_p_profile_save", "_p_profile_delete", "_p_admin_hand_over", "_p_team_reminders"})
         self.assertTrue(all(r.access == "body" for r in team.values()))
         # Handing over and deleting are the Company Admin's, checked in their handlers (S8).
         self.assertTrue(all(r.perm == "team" for h, r in team.items() if h not in {"_p_account_delete", "_p_admin_hand_over"}))

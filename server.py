@@ -2143,6 +2143,13 @@ class Handler(BaseHTTPRequestHandler):
             row["profile_name"] = names.get(row.get("profile_id") or row.get("role"), "Member")
         data["profiles"] = profiles.profiles(state)
         data["permissions"] = [{"key": k, "words": w} for k, w in profiles.PERMISSIONS]
+        data["templates"] = profiles.TEMPLATES
+        # Each person's notifications, for those who manage the team (Nov 26 walkthrough).
+        if has_perm(user, "team", state):
+            by_id = auth.team_reminders(user["company_id"])
+            for row in data["users"]:
+                row["notifications"] = reminders.team_view(by_id.get(row["id"]) or {})
+            data["reminders"] = reminders.kinds_and_channels()
         return data
 
     def _team_rules(self, company_id: str) -> dict:
@@ -2198,6 +2205,27 @@ class Handler(BaseHTTPRequestHandler):
         # A profile without Approve pay apps takes them off the approvers lists, so no pay app
         # waits on someone who can't approve (Round 2 decision 8).
         self._team_change(ctx, role, also=lambda st: domain.drop_approvers_without(st, approver_pool(ctx.company_id, st)))
+
+    def _p_team_reminders(self, m, ctx: "Ctx") -> None:
+        """Set the notifications of one person or several (Nov 26 walkthrough): {user_ids, prefs}.
+        Their own later change on My account wins; the Team page shows it."""
+        raw, ids = ctx.body.get("prefs"), ctx.body.get("user_ids")
+        try:
+            if not isinstance(raw, dict):
+                raise ValueError("Pick in the app, email or text.")
+            prefs = reminders.clean_prefs(raw)
+            if not isinstance(ids, list) or not ids or len(ids) > 200 or not all(isinstance(i, str) and i for i in ids):
+                raise ValueError("Pick who these are for.")
+        except ValueError as exc:
+            self._json(400, {"error": str(exc)})
+            return
+
+        def apply(user: dict) -> tuple:
+            people = auth.set_team_reminders(user["company_id"], list(dict.fromkeys(ids)), prefs, user["id"],
+                                             managers=self._team_rules(user["company_id"])["managers"])
+            return f"{user['name']} set the notifications of {', '.join(p['name'] for p in people)}.", None
+
+        self._team_change(ctx, apply)
 
     def _p_team_remove(self, m, ctx: "Ctx") -> None:
         gone: list = []
@@ -3040,7 +3068,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         person = auth.session_public(ctx.user["id"]) or ctx.user
         if not person.get("sms_opt_in"):
-            fields = {k: "Add your mobile number and agree to texts above first." for k, c in prefs.items() if "text" in c}
+            # Only a Text newly ticked: one the owner set for them (waiting for their agreement)
+            # doesn't stop them saving the rest.
+            had = person.get("reminders") or {}
+            fields = {k: "Add your mobile number and agree to texts above first." for k, c in prefs.items() if "text" in c and "text" not in (had.get(k) or [])}
             if fields:
                 self._json(409, {"error": next(iter(fields.values())), "fields": fields})
                 return
@@ -3218,6 +3249,7 @@ ROUTES = [
     Route("POST", r"/api/onboarding/dismiss", "_p_onboarding_dismiss", "body"),
     Route("POST", r"/api/team/invite", "_p_team_invite", "body", perm="team"),
     Route("POST", r"/api/team/invites/([^/]+)/revoke", "_p_team_revoke", "body", perm="team"),
+    Route("POST", r"/api/team/reminders", "_p_team_reminders", "body", perm="team"),
     Route("POST", r"/api/team/([^/]+)/role", "_p_team_role", "body", perm="team"),
     Route("POST", r"/api/team/([^/]+)/remove", "_p_team_remove", "body", perm="team"),
     Route("POST", r"/api/account/delete", "_p_account_delete", "body"),   # the Company Admin only (S8)

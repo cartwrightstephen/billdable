@@ -95,6 +95,37 @@ def clean_prefs(raw: dict[str, Any]) -> dict[str, list[str]]:
     return out
 
 
+def changes(team: dict[str, list[str]] | None, prefs: dict[str, list[str]]) -> list[dict[str, Any]]:
+    """Where a person's notifications differ from what the team last set for them (Nov 26
+    walkthrough: the owner sees who opted out), in KINDS and CHANNELS order. Empty when the team
+    never set them, or nothing changed since."""
+    if not isinstance(team, dict):
+        return []
+    out = []
+    for kind, (label, _) in KINDS.items():
+        was, now = set(team.get(kind) or []), set(prefs.get(kind) or [])
+        for channel, words in CHANNELS.items():
+            if (channel in was) != (channel in now):
+                on = channel in now
+                out.append({"kind": kind, "channel": channel, "on": on,
+                            "words": f"{words} {'on' if on else 'off'} for {label}"})
+    return out
+
+
+def team_view(person: dict[str, Any]) -> dict[str, Any]:
+    """One person's line on the Team page, for someone who manages the team: their choices, the
+    team's last setting (who, when) and what they changed since. person: auth.team_reminders'."""
+    prefs = {kind: list(person.get("prefs", {}).get(kind) or []) for kind in KINDS}
+    team = person.get("team")
+    return {"prefs": prefs, "set_by": team.get("by", "") if team else "", "set_at": team.get("at", "") if team else "",
+            "changed": changes(team.get("prefs") if team else None, prefs), "texts_on": bool(person.get("texts_on"))}
+
+
+def kinds_and_channels() -> dict[str, Any]:
+    return {"kinds": [{"key": k, "label": v[0], "help": v[1]} for k, v in KINDS.items()],
+            "channels": [[k, v] for k, v in CHANNELS.items()]}
+
+
 def _item(kind: str, job: dict[str, Any], key: str, text: str, path: str = "") -> dict[str, Any]:
     return {"kind": kind, "key": f"{kind}:{key}", "job_id": job["id"], "job": job.get("name", ""), "text": text,
             "path": path or f"/jobs/{job['id']}", "assignee_id": job.get("assignee_id") or ""}
@@ -458,4 +489,5 @@ def page(state: dict[str, Any], person: dict[str, Any], now: datetime) -> dict[s
             "notifications": notes, "unread": sum(1 for n in notes if not n["read"] and not n["done"]),
             "can_text": bool(person.get("sms_opt_in")), "texts_stopped": bool(person.get("sms_stopped")),
             "email_ready": mailer.configured(), "texts_ready": sms.configured(),
-            "last": last_result(person.get("company_id", ""), person["id"])}
+            "last": last_result(person.get("company_id", ""), person["id"]),
+            "set_by": person.get("reminders_set_by")}
