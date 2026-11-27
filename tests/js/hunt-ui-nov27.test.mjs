@@ -76,3 +76,9 @@ test("the lien Done on day, reminder days and Which job? boxes take the app's bo
   const css = readFileSync(new URL("../../static/styles.css", import.meta.url), "utf8");
   assert.match(css, /\.compliance-done input, \[data-form-key="csettings"\] input, \.upload-job select \{\n  padding: 6px 8px; border: 1px solid var\(--field\); border-radius: 6px; font: inherit; color: var\(--ink\); background: var\(--field-bg\);/);
 });
+
+test("My account says Accent color, in the US spelling the rest of the app uses", () => {
+  const src = readFileSync(new URL("../../static/js/views/settings.js", import.meta.url), "utf8");
+  assert.match(src, /label: "Accent color"/);
+  assert.doesNotMatch(src, /"Accent colour"/);
+});

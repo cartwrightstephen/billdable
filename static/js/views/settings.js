@@ -460,7 +460,7 @@ function appearanceCardHtml() {
       <h2>Appearance</h2>
       <div class="form-grid">
         ${field({ form: "appearance", name: "theme", id: "app-theme", label: "Theme", value: a.theme, options: THEMES })}
-        ${field({ form: "appearance", name: "accent", id: "app-accent", label: "Accent colour", value: a.accent, options: ACCENTS })}
+        ${field({ form: "appearance", name: "accent", id: "app-accent", label: "Accent color", value: a.accent, options: ACCENTS })}
       </div>
     </div>`;
 }
