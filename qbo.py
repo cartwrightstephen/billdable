@@ -393,10 +393,21 @@ def reconcile(state: dict[str, Any], invoices: list[dict[str, Any]]) -> list[dic
     out = []
     for job in state.get("jobs", []):
         payer = qbo_csv._norm(payers.get(job.get("payer_id"), {}).get("name", ""))
+        live = {i["number"] for i in job.get("invoices", []) if i.get("status") != "void"}
         for inv in job.get("invoices", []):
+            row = {"job_id": job["id"], "job": job["name"], "number": inv["number"], "invoice_id": inv["id"]}
+            # Pulled back (or revised and deleted) after it went to QuickBooks: Duracash doesn't void it there.
+            withdrawn = inv.get("status") == "void" and (inv.get("sent_at") or inv.get("revisions") or inv.get("qbo")) and inv["number"] not in live
+            if withdrawn:
+                hit = by_number.get(inv["number"])
+                balance = _cents(hit.get("Balance")) if hit else None
+                if hit and balance:
+                    out.append({**row, "kind": "withdrawn_open",
+                                "detail": f"{inv['number']} was withdrawn here; QuickBooks invoice {hit.get('DocNumber') or hit.get('Id')} still shows "
+                                          f"{domain.money(balance)} owed. Void it in QuickBooks."})
+                continue
             if inv.get("status") not in {"sent", "approved", "partial", "paid"}:
                 continue
-            row = {"job_id": job["id"], "job": job["name"], "number": inv["number"], "invoice_id": inv["id"]}
             hit = by_number.get(inv["number"])
             if not hit:  # no number in common: the same customer and amount, once
                 same = [q for q in unused if _cents(q.get("TotalAmt")) == inv["amount_cents"]

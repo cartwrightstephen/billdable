@@ -18,7 +18,7 @@ let qboReconcile = null;   // /api/qbo/reconcile: {rows, invoices}
 let qboItems = null;       // /api/qbo/items: {items, mapping} (escaped), while the items are being chosen
 let qboCustomers = null;   // /api/qbo/customers: {customers, suggest} (escaped), while clients are being linked
 let qboSynced = null;      // the last Sync now: {recorded, problems, checked} (escaped)
-const RECON_WORDS = { missing: "Not in QuickBooks", amount: "Amount differs", paid_in_qbo: "Paid in QuickBooks", open_in_qbo: "Open in QuickBooks" };
+const RECON_WORDS = { missing: "Not in QuickBooks", amount: "Amount differs", paid_in_qbo: "Paid in QuickBooks", open_in_qbo: "Open in QuickBooks", withdrawn_open: "Withdrawn here, open in QuickBooks" };
 
 // Signed out: the QuickBooks connection and the payments being imported are that company's.
 onSessionEnd(() => { paymentImport = null; qboStatus = null; qboReconcile = null; qboItems = null; qboCustomers = null; qboSynced = null; });

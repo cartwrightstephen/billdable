@@ -158,6 +158,14 @@ class WithdrawnQuickBooksInvoiceTests(unittest.TestCase):
         inv["qbo"] = {"invoice_id": "130", "doc_number": "PA-PINE-01", "total_cents": inv["amount_cents"]}
         domain.void_sent_pay_app(state, job["id"], inv["id"], "Wrong quantity")
         self.assertIn("QuickBooks invoice PA-PINE-01 still shows $4,500.00", " ".join(str(a) for a in state["audit"][-3:]))
+        # Check against QuickBooks names it while it is open there, and not once it is voided there.
+        import qbo
+        books = [{"Id": "130", "DocNumber": "PA-PINE-01", "TotalAmt": 4500.0, "Balance": 4500.0, "CustomerRef": {"name": "Jones Family"}}]
+        rows = qbo.reconcile(state, books)
+        self.assertEqual([r["kind"] for r in rows], ["withdrawn_open"])
+        self.assertIn("still shows $4,500.00 owed", rows[0]["detail"])
+        books[0]["Balance"] = 0
+        self.assertEqual(qbo.reconcile(state, books), [])
 
 
 
