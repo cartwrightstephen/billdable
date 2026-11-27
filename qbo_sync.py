@@ -509,7 +509,8 @@ def run_daily(site, now: datetime | None = None) -> list[str]:
     lines = []
     deleted = site.deleted()
     for company_id in site.company_ids():
-        if done.get(company_id) == day or company_id in deleted or not qbo.connection(company_id):
+        # status, not connection: it decrypts nothing, so tokens this server can't open don't stop the loop
+        if done.get(company_id) == day or company_id in deleted or not qbo.status(company_id)["connected"]:
             continue
         try:
             state = site.read(company_id)

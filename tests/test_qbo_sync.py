@@ -83,7 +83,7 @@ class FakeQbo(BaseHTTPRequestHandler):
             if self.headers.get("Authorization") != basic or form.get("grant_type") != ["refresh_token"]:
                 return self._reply(400, {"error": "invalid_grant"})
             b.access = f"A{int(b.access[1:]) + 1}"
-            b.log.append(("REFRESH", "", {}, None))
+            b.log.append(("REFRESH", "", {}, {"refresh_token": (form.get("refresh_token") or [""])[0]}))
             return self._reply(200, {"access_token": b.access, "refresh_token": "R" + b.access[1:], "expires_in": 3600, "x_refresh_token_expires_in": 8726400})
         body = json.loads(raw) if raw else None
         path = url.path.split(f"/v3/company/{REALM}/", 1)[-1]
@@ -387,6 +387,17 @@ class TransportTests(FakeCase):
         BOOKS.faults += [("GET query", 401, {}, {}), ("GET query", 401, {}, {})]
         with self.assertRaisesRegex(qbo.QboError, "connect it again"):
             qbo_sync.customers(self.cid)
+
+    def test_tokens_are_read_decrypted_and_a_refresh_is_stored_encrypted(self):  # sec2a H3
+        raw = json.loads((storage.DATA_DIR / "qbo_connections.json").read_text())[self.cid]
+        self.assertTrue(raw["access_token"].startswith("enc1:") and raw["refresh_token"].startswith("enc1:"))
+        BOOKS.access = "A7"
+        self.assertEqual(len(qbo_sync.customers(self.cid)), 1)
+        refresh = next(x for x in BOOKS.log if x[0] == "REFRESH")
+        self.assertEqual(refresh[3]["refresh_token"], "R1", "Intuit gets the plain refresh token, not the sealed one")
+        raw = json.loads((storage.DATA_DIR / "qbo_connections.json").read_text())[self.cid]
+        self.assertTrue(raw["access_token"].startswith("enc1:") and raw["refresh_token"].startswith("enc1:"))
+        self.assertEqual((qbo.connection(self.cid)["access_token"], qbo.connection(self.cid)["refresh_token"]), ("A8", "R8"))
 
     def test_environment_setting(self):
         for env, want in (({"QBO_ENVIRONMENT": "production"}, "production"), ({"QBO_ENVIRONMENT": "sandbox", "DURACASH_ENV": "production"}, "sandbox"),
