@@ -214,6 +214,18 @@ class SecurityHttpTests(unittest.TestCase):
         self.assertEqual(res.status, 403, "sending a pay app again takes Send pay apps")
         res, data = self.request("POST", "/api/outbox/eml-follow/retry", {}, cookie=self.member)
         self.assertEqual(res.status, 409, "a follow-up is anyone's; this one was sent, so it is refused for that")
+        # Integration (Nov 27): Resend to this recipient (delivery) takes the same permission, by the
+        # same helper (profiles.may_send_again), and says so in the same words.
+        res, again = self.request("POST", "/api/outbox/eml-paypay/resend", {"email": "ap@park.example"}, cookie=self.member)
+        self.assertEqual(res.status, 403, again)
+        res, data = self.request("POST", "/api/outbox/eml-paypay/retry", {}, cookie=self.member)
+        self.assertEqual(data, again, "one refusal for both buttons")
+        res, data = self.request("POST", "/api/outbox/eml-follow/resend", {"email": "nobody@else.example"}, cookie=self.member)
+        self.assertEqual(res.status, 409, "a follow-up is anyone's to resend; that address isn't on it")
+        member = auth.session_public(auth.user_by_email(f"field{self.n}@example.com")["id"]) or auth.user_by_email(f"field{self.n}@example.com")
+        state = server.load_company(self.company)
+        self.assertEqual([profiles.may_send_again(member, {"kind": k}, state) for k in ("pay_app", "waiver", "retainage", "pay_app_withdrawn", "follow_up", "")],
+                         [False, False, False, False, True, True])
 
     # ----- M1: cross-site posts -----
 

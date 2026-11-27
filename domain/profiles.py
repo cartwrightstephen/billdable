@@ -132,6 +132,14 @@ OFFICE_PERMS = {"send_payapps", "send_waivers", "ask_retainage", "financials"}
 EMAIL_KIND_PERMS = {"pay_app": "send_payapps", "pay_app_withdrawn": "void", "waiver": "send_waivers", "retainage": "ask_retainage"}
 
 
+def may_send_again(user: dict[str, Any], email: dict[str, Any] | None, state: dict[str, Any] | None = None) -> bool:
+    """Whether this person may send an Outbox email again, all of it (Send again) or to one of its
+    addresses (Resend to this recipient): whoever may take the action that sent it. Follow-ups,
+    drafts for review and change order signature requests are anyone's, as they are to send."""
+    need = EMAIL_KIND_PERMS.get(str((email or {}).get("kind") or ""))
+    return not need or has_perm(user, need, state)
+
+
 def _sensitive_record(record: dict[str, Any]) -> bool:
     return record.get("kind") in SENSITIVE_KINDS or (record.get("kind") == "ticket" and record.get("ticket_type") in SENSITIVE_TICKETS)
 

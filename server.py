@@ -2568,18 +2568,25 @@ class Handler(BaseHTTPRequestHandler):
         # Read pasted rows; nothing is saved until the schedule itself is saved.
         self._json(200, sov.parse_rows(_text(ctx.body, "text", limit=200_000)))
 
-    def _p_outbox_retry(self, m, ctx: "Ctx") -> None:
-        # Sending an email again takes what sending it took (L1): a pay app, send_payapps; a waiver, send_waivers.
+    def _send_again_refused(self, ctx: "Ctx", email_id: str) -> bool:
+        """Sending an email again, whole or to one address, takes what sending it took (L1;
+        profiles.may_send_again): a pay app, send_payapps; a waiver, send_waivers. Answers 403
+        and returns True when refused."""
         state = company_state(ctx.company_id)
-        entry = next((e for e in state.get("email_log", []) if e.get("id") == m.group(1)), None)
-        need = profiles.EMAIL_KIND_PERMS.get(str((entry or {}).get("kind") or ""))
-        if need and not has_perm(ctx.user, need, state):
-            self._json(403, {"error": NO_PERMISSION})
-            return
-        self._json(*outbox.retry_email(SITE, ctx.company_id, ctx.user, m.group(1), self._rid))
+        entry = next((e for e in state.get("email_log", []) if e.get("id") == email_id), None)
+        if profiles.may_send_again(ctx.user, entry, state):
+            return False
+        self._json(403, {"error": NO_PERMISSION})
+        return True
+
+    def _p_outbox_retry(self, m, ctx: "Ctx") -> None:
+        if not self._send_again_refused(ctx, m.group(1)):
+            self._json(*outbox.retry_email(SITE, ctx.company_id, ctx.user, m.group(1), self._rid))
 
     def _p_outbox_resend(self, m, ctx: "Ctx") -> None:
         """Send to this recipient again (Siteline comparison, item 5): one address of an email."""
+        if self._send_again_refused(ctx, m.group(1)):
+            return
         self._json(*outbox.resend_to(SITE, ctx.company_id, ctx.user, m.group(1), _text(ctx.body, "email", limit=254), ctx.actor, self._rid))
 
     def _g_open_pixel(self, m) -> None:

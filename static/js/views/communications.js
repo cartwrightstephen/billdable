@@ -1,13 +1,13 @@
 // Communications: the Outbox (every approved send and follow-up, with what became of it, its
 // attachments and a Print), and the print sheet the Outbox and the Inbox share. The Inbox is in
 // inbox.js.
-import { fmtDateTime, words, emailStatusHtml, unesc } from "../format.js";
+import { fmtDateTime, words, emailStatusHtml, unesc, maySendAgain } from "../format.js";
 import { pathFor } from "../routes.js";
 import { jobFilterOptions, jobFilterShown } from "../jobs.js";
 import { moreButton } from "../dom.js";
 import { termText } from "../terms.js";
-import { state, me, onSessionEnd, mailReady } from "../state.js";
-import { post, emptyState, listPage, fileLink, can } from "../app-core.js";
+import { state, onSessionEnd, mailReady } from "../state.js";
+import { post, emptyState, listPage, fileLink } from "../app-core.js";
 
 let outboxJobFilter = "all";
 
@@ -66,8 +66,6 @@ export function printSheet(fields, title, body, attachments = []) {
 // before these lines were kept reads from its own status. Values arrive escaped.
 const DELIVERY_WORDS = { queued: "Waiting", sending: "Sending", sent: "Sent", delivered: "Delivered", opened: "Opened", bounced: "Bounced", failed: "Failed", "not sent": "Not sent" };
 const DELIVERY_PILL = { delivered: "green", opened: "green", bounced: "red", failed: "red", "not sent": "amber" };
-// Who may send an email again (outbox.KIND_PERMS): whoever may send that kind.
-const RESEND_PERM = { pay_app: "send_payapps", waiver: "send_waivers", retainage: "ask_retainage", pay_app_withdrawn: "void" };
 
 export function recipientRows(e) {
   if ((e.recipients || []).length) return e.recipients;
@@ -82,9 +80,9 @@ export function recipientRows(e) {
 }
 
 export function mayResend(e) {
-  const perm = RESEND_PERM[unesc(e.kind || e.email_kind || "")];
   const st = unesc(e.status || "");
-  return mailReady && !e.moot && !e.resend_moot && !e.sample && !st.includes("demo account") && st !== "queued" && st !== "sending" && (!perm || can(perm)) && !!me;
+  // Who may: whoever may send that kind (format.js maySendAgain, as the server's profiles.may_send_again).
+  return mailReady && !e.moot && !e.resend_moot && !e.sample && !st.includes("demo account") && st !== "queued" && st !== "sending" && maySendAgain(e);
 }
 
 export function deliveryHtml(e) {

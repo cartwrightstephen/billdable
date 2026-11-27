@@ -103,3 +103,22 @@ test("the playbook shows days to paid and the on-time rate", () => {
   assert.match(payStatsHtml({ pay_stats: { paid: 3, median_days: 38, average_days: 36, on_time: 1, judged: 2, on_time_pct: 50 } }),
     /Days to paid: median 38 days, average 36 days \(3 paid\)\. On time 1 of 2 with a due date \(50%\)\. New pay apps to them are expected about 38 days after they go\./);
 });
+
+// Integration (Nov 27): Send again and Resend to this recipient show only to those who may send
+// that kind (format.js maySendAgain, as the server's profiles.may_send_again).
+test("Send again and Resend to this recipient hide from those who can't send that kind", async () => {
+  const { emailStatusHtml, maySendAgain } = await import("../../static/js/format.js");
+  const { rowButtons } = await import("../../static/js/today.js");
+  const failed = sentEmail({ status: "failed: timeout", recipients: [] });
+  show(job(), ["record_payments"]);
+  assert.equal(maySendAgain(failed), false);
+  assert.doesNotMatch(emailStatusHtml(failed), /email-retry/);
+  assert.doesNotMatch(deliveryHtml(sentEmail()), /email-resend/);
+  assert.doesNotMatch(rowButtons({ kind: "email_failed", email_id: "e1", email_kind: "pay_app", button: "Send again", job_id: "j1" }, core.perms()), /email-retry/);
+  assert.equal(maySendAgain({ kind: "follow_up" }), true, "a follow-up is anyone's");
+  show(job(), ["send_payapps"]);
+  assert.match(emailStatusHtml(failed), /data-action="email-retry"/);
+  assert.match(deliveryHtml(sentEmail()), /email-resend/);
+  assert.match(rowButtons({ kind: "email_failed", email_id: "e1", email_kind: "pay_app", button: "Send again", job_id: "j1" }, core.perms()), /email-retry/);
+  assert.equal(maySendAgain({ kind: "waiver" }), false);
+});

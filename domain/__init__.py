@@ -3341,7 +3341,7 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
         job = jobs.get(e.get("job_id"))
         if job:
             add(0.5, "email_failed", job, "Didn't go out", "red", f"{e.get('subject', '')} to {e.get('to', '')}: {e.get('status', '')}",
-                "Send again", "/dashboard", email_id=e.get("id", ""), invoice_id=e.get("payapp_invoice_id") or "")
+                "Send again", "/dashboard", email_id=e.get("id", ""), invoice_id=e.get("payapp_invoice_id") or "", email_kind=e.get("kind", ""))
     inbox = [i for i in state.get("inbox", []) if i.get("status") == "new"]
     for item in inbox:
         job = jobs.get(item.get("says_done_job_id"))

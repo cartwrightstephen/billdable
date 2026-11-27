@@ -1,5 +1,5 @@
 // Formatting and escaping: money, dates, status words. Every value from the server is HTML-escaped once on arrival (escDeep); unesc gives back the raw text.
-import { mailReady } from "./state.js";
+import { mailReady, me } from "./state.js";
 
 // Every string that comes from the server is HTML-escaped once, when it
 // arrives. Templates below interpolate into innerHTML, so this is what keeps
@@ -146,6 +146,16 @@ function refusedCopies(e) {
   return r.length ? `Not delivered to the copy address${r.length === 1 ? "" : "es"} ${r.join(", ")}` : "";
 }
 
+// Sending an email again (Send again, Resend to this recipient) takes the permission that sent it,
+// as the server's profiles.may_send_again: the buttons show only to those who can use them.
+export const EMAIL_KIND_PERMS = { pay_app: "send_payapps", pay_app_withdrawn: "void", waiver: "send_waivers", retainage: "ask_retainage" };
+export function maySendAgain(e) {
+  if (!me) return false;
+  const perm = EMAIL_KIND_PERMS[unesc((e && (e.kind || e.email_kind)) || "")];
+  if (!perm) return true;
+  return Array.isArray(me.perms) ? me.perms.includes(perm) : me.role === "owner";
+}
+
 export function emailStatusHtml(e) {
   const st = e.status || "";
   const cls = st === "sent" ? "green" : (st.startsWith("failed") || st.startsWith("bounced")) ? "red" : st.startsWith("not sent") ? "amber" : "";
@@ -161,7 +171,7 @@ export function emailStatusHtml(e) {
   const moot = e.moot && !inFlight ? `<div class="sub">No need to send it now: ${e.moot}</div>` : "";
   // Send again only where the server sends mail (round 1, item 7): elsewhere it can't work.
   // Nor on the demo, which never emails (Round 1 acceptance, item 27).
-  const retry = mailReady && !moot && !st.includes("demo account") && (st.startsWith("failed") || st.startsWith("not sent") || stuck) ? ` <button class="btn small secondary" data-action="email-retry" data-email="${e.id}">Send again</button>` : "";
+  const retry = mailReady && maySendAgain(e) && !moot && !st.includes("demo account") && (st.startsWith("failed") || st.startsWith("not sent") || stuck) ? ` <button class="btn small secondary" data-action="email-retry" data-email="${e.id}">Send again</button>` : "";
   return `<span class="pill ${cls}">${words(st)}</span>${when}${moot}${retry}`;
 }
 

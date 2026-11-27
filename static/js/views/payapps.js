@@ -2,7 +2,7 @@
 // payments, approval).
 // A pay app is drafted on its job's page; New pay app here asks for the job and opens that job's
 // step for it, the progress form or Draft pay app (Stephen's Oct 29 review, G10).
-import { esc, unesc, money, fmtDate, fmtDateTime, invoicePill, emailStatusHtml, words } from "../format.js";
+import { esc, unesc, money, fmtDate, fmtDateTime, invoicePill, emailStatusHtml, words, maySendAgain } from "../format.js";
 import { shortPayLabel, shortPayAttrs, canPullBack, openJobs, draftFromDailyOn, payAppStarts, defaultJobId, finalOverrideText } from "../jobs.js";
 import { pathFor } from "../routes.js";
 import { askConfirm, focusAfterDraw } from "../dom.js";
@@ -154,7 +154,7 @@ function undeliveredHtml(inv) {
   const e = (state.email_failures || []).find(x => x.payapp_invoice_id === inv.id);
   if (!e) return "";
   const why = unesc(e.status || "").replace(/^(failed|not sent):\s*/, "");
-  return `<p class="notice email-undelivered" role="status">Marked sent · the email to ${e.to} was not delivered: ${esc(why)}.${mailReady && !why.includes("demo account") ? ` <button class="btn small secondary" data-action="email-retry" data-email="${e.id}">Send again</button>` : ""}</p>`;
+  return `<p class="notice email-undelivered" role="status">Marked sent · the email to ${e.to} was not delivered: ${esc(why)}.${mailReady && maySendAgain(e) && !why.includes("demo account") ? ` <button class="btn small secondary" data-action="email-retry" data-email="${e.id}">Send again</button>` : ""}</p>`;
 }
 
 // A GC, public or lower-tier job billed at 0% when the client usually holds some (round 1, item 1).

@@ -215,10 +215,6 @@ def retry_email(site, company_id: str, user: dict, email_id: str, rid: str = "")
     return 200, deliver_queued(site, company_id, user, {email_id}, rid) or payload
 
 
-# Who may send an email again to one of its addresses: whoever may take the action that sent it
-# (domain/profiles.py JOB_ACTION_PERMS: Approve & send, Send waiver, Ask for retainage, Pull back);
-# follow-ups, drafts for review and change order signature requests are anyone's, as they are.
-KIND_PERMS = {"pay_app": "send_payapps", "waiver": "send_waivers", "retainage": "ask_retainage", "pay_app_withdrawn": "void"}
 # Fields of an Outbox row that describe one send, not the email itself.
 SEND_FIELDS = {"id", "at", "status", "audit_seq", "sending_at", "delivered_at", "failed_at", "bounced_at", "message_id",
                "not_attached", "refused", "recipients", "retried", "reply_to", "moot", "resend_of", "resent_to"}
@@ -234,9 +230,8 @@ def resend_to(site, company_id: str, user: dict, email_id: str, address: str, ac
         entry = next((e for e in state.get("email_log", []) if e["id"] == email_id), None)
         if not entry:
             return 404, {"error": "Not found"}
-        perm = KIND_PERMS.get(entry.get("kind", ""))
-        if perm and not profiles.has_perm(user, perm, state):
-            return 403, {"error": f"Your profile doesn't include this: {profiles.PERM_WORDS[perm].lower()}."}
+        if not profiles.may_send_again(user, entry, state):   # the server checks first; this is under the lock
+            return 403, {"error": "Your permissions don't cover that. Someone who manages the team can change them."}
         status = str(entry.get("status") or "")
         if status in {"queued", "sending"}:
             return 409, {"error": "This email is still going out. Wait for it, then send it again."}

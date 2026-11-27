@@ -13,6 +13,7 @@ import { FILE_KINDS, RECORD_KINDS, fileKindPick, mayTake } from "./jobs.js";
 import { pathFor } from "./routes.js";
 import { BALL_WORDS } from "./tasks.js";
 import { mailReady } from "./state.js";
+import { maySendAgain } from "./format.js";
 
 const WENT_OUT = ["sent", "approved", "partial", "paid"];
 export const QUEUE_SHOWN = 3;   // rows shown before "and N more"
@@ -65,7 +66,8 @@ export function inboxKindSelect(r) {
 export function rowButtons(r, perms) {
   // An email that didn't go out has Send again only where the server sends mail (round 1, item 7).
   // Marking work done takes manage_jobs: without it, a "Job's done?" row just opens the job.
-  const attrs = r.kind === "email_failed" && !mailReady ? null : r.kind === "says_done" && !mayTake("done", perms) ? null : ACTIONS[r.kind];
+  // Send again also takes the permission that sent it (format.js maySendAgain).
+  const attrs = r.kind === "email_failed" && (!mailReady || !maySendAgain({ kind: r.email_kind })) ? null : r.kind === "says_done" && !mayTake("done", perms) ? null : ACTIONS[r.kind];
   const main = attrs && r.button ? `<button class="btn small" ${attrs(r)}>${r.button}</button>` + (r.kind === "inbox" ? inboxKindSelect(r) : "") : "";
   // Talked to them? A Conversation / note with client on New job record (Nov 26), for this job.
   const dismiss = DISMISSABLE.includes(r.kind) ? `<button class="btn small secondary" data-action="dismiss-row" data-id="${r.job_id}" data-key="${r.key}">${r.kind === "no_record" ? "Dismiss for today" : "Dismiss"}</button>` : "";
