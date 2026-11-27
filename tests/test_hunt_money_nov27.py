@@ -187,5 +187,21 @@ class LargeFiguresOnTheSheetTests(unittest.TestCase):
         self.assertIn(b"/F3 7 Tf", pdf)
 
 
+
+class PayerPageRetainageColumnTests(unittest.TestCase):
+    def test_a_line_held_at_its_own_percent_shows_on_a_job_at_0(self):
+        """The client's page showed the retainage column only when the pay app's own percent was
+        more than 0, so a job at 0% with a line held at 5% hid what that line held."""
+        import payer_page
+        state, job, labor, materials = schedule_job(retainage=0)
+        domain.set_line_retainage(state, job["id"], {materials: "5"})
+        domain.record_sov_progress(state, job["id"], {labor: "0.5", materials: "40"})
+        inv = send(state, job)
+        self.assertEqual(inv["retainage_cents"], 10_000)
+        html = payer_page._sheet(job, inv)
+        self.assertIn("<th>Retainage</th>", html)
+        self.assertIn("$100.00", html)
+
+
 if __name__ == "__main__":
     unittest.main()

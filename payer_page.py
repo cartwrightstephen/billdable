@@ -136,13 +136,15 @@ def _sheet(job: dict[str, Any], invoice: dict[str, Any]) -> str:
     if not entries:
         return ""
     pct = int(invoice.get("retainage_pct", job.get("retainage_pct")) or 0)
-    heads = ["Item", "Description", "Scheduled", "Previous", "This period", "Stored", "Qty to date", "To date", "%", "Balance"] + (["Retainage"] if pct else [])
+    # A line held at its own percent (payapp_core) has a retainage figure even when the pay app's is 0%.
+    held = bool(pct) or any(e.get("retainage_pct") for e in entries)
+    heads = ["Item", "Description", "Scheduled", "Previous", "This period", "Stored", "Qty to date", "To date", "%", "Balance"] + (["Retainage"] if held else [])
     money = lambda c: _e(domain.money(c))
     rows = []
     for e in entries:
         c = sov.sheet_columns(e, pct)
         cells = [_e(e.get("item", "")), _e(e.get("description", "")), money(c["scheduled"]), money(c["previous"]), money(c["this_period"]),
-                 money(c["stored"]), _e(sov.qty_to_date(e)), money(c["to_date"]), f"{c['pct']}%", money(c["balance"])] + ([money(c["retainage"])] if pct else [])
+                 money(c["stored"]), _e(sov.qty_to_date(e)), money(c["to_date"]), f"{c['pct']}%", money(c["balance"])] + ([money(c["retainage"])] if held else [])
         rows.append("<tr>" + "".join(f"<td>{x}</td>" for x in cells) + "</tr>")
     return ('<h2>Continuation sheet</h2><div class="card sheet"><table><tr>' + "".join(f"<th>{_e(h)}</th>" for h in heads) + "</tr>"
             + "".join(rows) + "</table></div>")
