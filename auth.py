@@ -24,7 +24,8 @@ import storage
 import totp
 
 AUTH_PATH = storage.DATA_DIR / "auth.json"
-LOCK = threading.Lock()
+# Held across processes too (M7): admin.py run from the Shell waits for the server's change, and back.
+LOCK = storage.ProcessLock(lambda: AUTH_PATH.with_name(".auth.json.lock"))
 
 MIN_PASSWORD = 10
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")

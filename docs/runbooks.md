@@ -12,6 +12,12 @@ next restart (the start script hands the data folder back then), so start each w
 `setpriv --reuid=duracash --regid=duracash --init-groups python3 admin.py companies`, or restart
 the service after.
 
+`admin.py` may run while the server is up: it takes the same company and accounts locks (they
+hold across processes), so the two take turns. If the server saved the same company in between,
+the command says "changed at the same moment" and saves nothing; run it again. A second
+**server** on the same data directory refuses to start ("Another Duracash server is already
+using …"); stop the first one, or for `backup.py restore`, stop the service as that runbook says.
+
 ## 1. Deploy
 
 1. Open a pull request into `dev`. GitHub Actions runs the tests; merge only when it is green.

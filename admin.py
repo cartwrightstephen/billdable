@@ -14,6 +14,9 @@
                                                    (each is also brought up to date the first time it is read)
 
 Every command acts on DURACASH_DATA_DIR, like the server. See docs/runbooks.md.
+A command run while the server is up takes the same company and accounts locks as the server
+(they hold across processes, M7), so the two take turns; a company the server changed after
+the command read it is refused with "changed at the same moment", and the command can be run again.
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ import domain
 import migrations
 import monthly
 import server
+import store
 
 
 def _companies() -> list[dict]:
@@ -137,5 +141,13 @@ def main(argv: list[str]) -> int:
     return 0
 
 
+def run(argv: list[str]) -> int:
+    try:
+        return main(argv)
+    except store.ChangedElsewhere:
+        print("The company was changed at the same moment by the server. Nothing was saved by this command; run it again.")
+        return 1
+
+
 if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+    sys.exit(run(sys.argv))

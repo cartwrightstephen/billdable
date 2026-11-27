@@ -294,8 +294,9 @@ class AuthTests(unittest.TestCase):
 
     def test_write_is_atomic_and_leaves_no_temp_files(self):
         auth.create_user(self.email, self.password, "Test Owner", self.company)
-        names = [p.name for p in Path(self.tmp.name).iterdir()]
-        self.assertEqual(names, ["auth.json"])
+        # The lock file (M7) stays beside it; no temp file does.
+        names = sorted(p.name for p in Path(self.tmp.name).iterdir())
+        self.assertEqual(names, [".auth.json.lock", "auth.json"])
 
 
 if __name__ == "__main__":

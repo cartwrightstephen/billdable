@@ -35,7 +35,7 @@ UPLOADS = storage.DATA_DIR / "uploads"
 MAX_FILE_BYTES = 15 * 1024 * 1024
 MAX_TEXT_CHARS = 20_000
 MAX_NEW_INBOX = 1000          # an Inbox this full refuses more until items are filed
-TOKENS_LOCK = threading.Lock()
+TOKENS_LOCK = storage.ProcessLock(lambda: storage.DATA_DIR / ".inbound_tokens.json.lock")  # across processes too (M7)
 # Uppercase words that look like job codes but aren't: months, days, common words.
 NOT_CODES = {
     "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "SEPT", "OCT", "NOV", "DEC",

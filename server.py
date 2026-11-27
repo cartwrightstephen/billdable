@@ -85,16 +85,22 @@ PAYER_QUESTIONS_PER_HOUR = 5   # questions from one customer-page link an hour
 PAYER_QUESTIONS_PER_DAY = 20   # from all of a company's customer pages a day (the daily email limit is 50)
 _COMPANY_LOCKS: dict = {}
 _COMPANY_LOCKS_GUARD = threading.Lock()
-_DELETED_LOCK = threading.Lock()
+_DELETED_LOCK = storage.ProcessLock(lambda: _deleted_path().with_name(".deleted_companies.json.lock"))
 DISK_FREE_MIN_MB = 200   # /healthz answers 503 below this (R6-06)
 INBOUND_PER_HOUR = 120   # posts an hour to one inbound email or text address (R6-07)
 
 
-def company_lock(company_id: str) -> threading.RLock:
+def company_lock(company_id: str) -> "storage.ProcessLock":
     """One lock per company: a change loads, edits and saves under it. Companies don't wait on each other.
-    The same thread may take it again: a read that brings an old file up to date saves it under it."""
+    The same thread may take it again: a read that brings an old file up to date saves it under it.
+    It holds across processes too (M7), through a file in companies/.locks/, so admin.py run while
+    the server is up waits for the server's change instead of saving over it."""
     with _COMPANY_LOCKS_GUARD:
-        return _COMPANY_LOCKS.setdefault(company_id, threading.RLock())
+        lock = _COMPANY_LOCKS.get(company_id)
+        if lock is None:
+            lock = _COMPANY_LOCKS[company_id] = storage.ProcessLock(
+                lambda: COMPANIES / ".locks" / f"{re.sub(r'[^A-Za-z0-9_-]', '_', company_id)}.lock", reentrant=True)
+        return lock
 
 
 MAX_BODY_BYTES = 1_000_000
@@ -877,6 +883,9 @@ class Handler(BaseHTTPRequestHandler):
                 # Most changes queue none: then the company isn't loaded again just to find that out.
                 queued = {e.get("id") for e in state.get("email_log", []) if e.get("status") == "queued" and e.get("id") not in waiting} \
                     if deliver and user is not None else set()
+        except store.ChangedElsewhere:
+            log_json("warn", msg="save refused: changed by another program", company=company_id, rid=self._rid)
+            return 409, {"error": store.ChangedElsewhere.MESSAGE}
         except UnknownAction:
             return 404, {"error": "Unknown action"}
         except OwnerOnly:
@@ -962,6 +971,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(409, _gate(exc))
         except CompanyMissing:
             self._json(503, {"error": CompanyMissing.MESSAGE, "request_id": self._rid})
+        except store.ChangedElsewhere:
+            self._json(409, {"error": store.ChangedElsewhere.MESSAGE, "request_id": self._rid})
         except Exception:
             self._crash()
 
@@ -975,6 +986,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(409, _gate(exc))
         except CompanyMissing:
             self._json(503, {"error": CompanyMissing.MESSAGE, "request_id": self._rid})
+        except store.ChangedElsewhere:
+            self._json(409, {"error": store.ChangedElsewhere.MESSAGE, "request_id": self._rid})
         except Exception:
             self._crash()
 
@@ -3667,6 +3680,12 @@ def main() -> None:
     if problems:
         for problem in problems:
             log_json("error", msg=f"Refusing to start in production: {problem}")
+        sys.exit(1)
+    # One server per data directory (M7): a second copy started on the same disk is refused.
+    try:
+        storage.claim_data_dir("server")
+    except storage.DataDirBusy as exc:
+        log_json("error", msg=f"Refusing to start: {exc}")
         sys.exit(1)
     auth.upgrade_file(migrations.AUTH_STEPS)
     if demo_enabled():
