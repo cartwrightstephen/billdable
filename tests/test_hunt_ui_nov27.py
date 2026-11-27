@@ -35,5 +35,23 @@ class StoredLineLabelTests(unittest.TestCase):
         self.assertEqual(label, "1. Labor (50% complete to date)")
 
 
+class RevisedEmailTests(unittest.TestCase):
+    def job(self, status="sent"):
+        inv = {"id": "i1", "number": "PA-2", "status": status, "revised_at": "2026-11-27T12:17:00+00:00"}
+        return {"invoices": [inv], "change_orders": []}
+
+    def test_an_email_of_the_version_before_a_revision_is_not_sent_again(self):
+        old = {"kind": "pay_app", "payapp_invoice_id": "i1", "at": "2026-11-27T12:16:00+00:00"}
+        self.assertIn("was revised after this email", domain.email_moot(self.job(), old))
+
+    def test_the_revised_versions_own_email_can_go_again(self):
+        new = {"kind": "pay_app", "payapp_invoice_id": "i1", "at": "2026-11-27T12:19:00+00:00"}
+        self.assertEqual(domain.email_moot(self.job(), new), "")
+
+    def test_while_back_to_a_draft_it_says_so_first(self):
+        old = {"kind": "pay_app", "payapp_invoice_id": "i1", "at": "2026-11-27T12:16:00+00:00"}
+        self.assertIn("back to a draft", domain.email_moot(self.job("draft"), old))
+
+
 if __name__ == "__main__":
     unittest.main()

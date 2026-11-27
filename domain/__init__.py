@@ -3178,6 +3178,10 @@ def email_moot(job: dict[str, Any], e: dict[str, Any]) -> str:
         return f"{number} was pulled back." if inv.get("sent_at") else f"The draft {number} was deleted."
     if e.get("kind") == "pay_app" and inv and inv.get("revised_at") and inv.get("status") in DRAFT_STATUSES:
         return f"{inv.get('number', 'That pay app')} is back to a draft for revision."
+    # An email of the version before a revision carries that version's PDF: sent again, it would
+    # put the corrected figures' predecessor in front of the client.
+    if e.get("kind") == "pay_app" and inv and inv.get("revised_at") and str(e.get("at") or "") and str(e.get("at")) < str(inv["revised_at"]):
+        return f"{inv.get('number', 'That pay app')} was revised after this email; the revised version is the one that goes."
     # Once the money is in, a pay app or follow-up that didn't go out no longer matters.
     if e.get("kind") == "pay_app" and inv and inv.get("status") == "paid":
         return f"{inv.get('number', 'That pay app')} is paid."
