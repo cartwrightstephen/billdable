@@ -267,7 +267,8 @@ def period_end_day(state: dict[str, Any], job: dict[str, Any], payer: dict[str, 
 def pay_period(state: dict[str, Any], job: dict[str, Any], payer: dict[str, Any] | None = None, today: date | None = None) -> dict[str, Any]:
     """The pay period the next pay app bills (Nov 26: the dates come from the contract): from the
     day after the last sent pay app's period, or the job's start, to the first period end on or
-    after that. {from, to, end_day}, dates as YYYY-MM-DD; to may be ahead of today."""
+    after that; when that end has already gone by (a cycle was missed), to the most recent period
+    end on or before today. {from, to, end_day}, dates as YYYY-MM-DD; to may be ahead of today."""
     from domain import DRAFT_STATUSES
     today = today or datetime.now(timezone.utc).date()
     end_day = period_end_day(state, job, payer)
@@ -278,6 +279,15 @@ def pay_period(state: dict[str, Any], job: dict[str, Any], payer: dict[str, Any]
     if to < floor:
         y, m = (floor.year + 1, 1) if floor.month == 12 else (floor.year, floor.month + 1)
         to = _cutoff(end_day, y, m)
+    if to < today:
+        # A cycle was missed (Nov 27): the pay app bills everything recorded up to the most recent
+        # period end on or before today, not only the first period, which would leave the work
+        # since then for later.
+        latest = _cutoff(end_day, today.year, today.month)
+        if latest > today:
+            y, m = (today.year - 1, 12) if today.month == 1 else (today.year, today.month - 1)
+            latest = _cutoff(end_day, y, m)
+        to = max(to, latest)
     return {"from": floor.isoformat(), "to": to.isoformat(), "end_day": end_day}
 
 
