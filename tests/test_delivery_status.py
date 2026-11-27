@@ -221,8 +221,12 @@ class DeliveryHttpTests(unittest.TestCase):
         conn.close()
         return res, body
 
-    def sent_pay_app(self, who, copy="pm@park.example", tracking=False):
+    def sent_pay_app(self, who, copy="pm@park.example", tracking=False, env=None):
         cookie, job = self.company(who)
+        with mock.patch.dict(os.environ, env or {}):
+            return self._send_it(cookie, job, copy, tracking)
+
+    def _send_it(self, cookie, job, copy, tracking):
         if tracking:
             res, data = self.request("POST", "/api/company", {"open_tracking": True}, cookie=cookie)
             self.assertEqual(res.status, 200, data)
@@ -234,8 +238,9 @@ class DeliveryHttpTests(unittest.TestCase):
 
     def test_open_tracking_gives_each_address_its_own_copy_and_image(self):
         self.sink.messages.clear()
-        with mock.patch.dict(os.environ, {"DURACASH_URL": "https://app.duracash.example"}):
-            cookie, job, state = self.sent_pay_app("track1@pine.example", tracking=True)
+        # Signed up first: with DURACASH_URL set, sign-up answers alike for every address and
+        # signs nobody in until the email is confirmed (dev's uniform sign-up).
+        cookie, job, state = self.sent_pay_app("track1@pine.example", tracking=True, env={"DURACASH_URL": "https://app.duracash.example"})
         e = state["email_log"][-1]
         self.assertEqual(e["status"], "sent")
         self.assertEqual(sorted(m["to"][0] for m in self.sink.messages if m["to"][0].endswith("park.example")),
