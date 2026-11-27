@@ -46,3 +46,14 @@ test("a diary entry's label shows its day as the page writes dates, not 2026-11-
   assert.equal(recordFace({ kind: "daily", label: "Diary entry 2026-11-27: 3 EA sink" }).label, "Diary entry Nov 27, 2026: 3 EA sink");
   assert.equal(recordFace({ kind: "note", label: "Diary entry 2026-11-27" }).label, "Diary entry 2026-11-27");
 });
+
+test("up to tablet width, boxes, fold titles, the money strip and Log out are 44 px, after the forms' own rules", () => {
+  const css = readFileSync(new URL("../../static/styles.css", import.meta.url), "utf8");
+  const at = css.lastIndexOf("@media (pointer: coarse), (max-width: 1024px) {");
+  assert.ok(at > css.indexOf(".form-inline input, .form-inline textarea, .form-inline select"), "comes after the 34 px box rules");
+  const block = css.slice(at, css.indexOf("\n}", at));
+  assert.match(block, /#app input:not\(\[type=checkbox\]\):not\(\[type=radio\]\):not\(\[type=file\]\), #app select \{ min-height: 44px; \}/);
+  assert.match(block, /#app details:not\(\.info-pop\) > summary \{ min-height: 44px;/);
+  assert.match(block, /\.money-strip \.strip-item \{ display: inline-flex; align-items: center; gap: 0\.3em; min-height: 44px; \}/);
+  assert.match(block, /\.user-meta \.reset-btn \{ min-height: 44px;/);
+});

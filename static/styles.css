@@ -1009,3 +1009,17 @@ fieldset.co-items legend, fieldset.co-backup legend { color: var(--muted); font-
 .cf-match h4 { margin: 14px 0 4px; }
 .cf-note textarea { width: 100%; }
 .cf-problems { margin: 4px 0; padding-left: 20px; }
+
+/* Up to tablet width every control is 44 px tall, as the rule above says (Nov 27 hunt, iPad at
+   1024 and 768): a form's own box rules (.form-inline, .filter-bar, .form-row: 34 px) came after
+   the tablet rule and won; a fold's title ("What do these mean?", "Show message", a record group)
+   was a line of text; the money strip's figures and Log out were a line of small type. */
+@media (pointer: coarse), (max-width: 1024px) {
+  #app input:not([type=checkbox]):not([type=radio]):not([type=file]), #app select { min-height: 44px; }
+  #app details:not(.info-pop) > summary { min-height: 44px; padding-top: 10px; padding-bottom: 10px; box-sizing: border-box; }
+  #app .money-strip .strip-item { display: inline-flex; align-items: center; gap: 0.3em; min-height: 44px; }
+  #app .user-meta .reset-btn { min-height: 44px; padding: 0; }
+}
+@media (max-width: 640px) {
+  #app .money-strip .strip-item { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 0; }
+}
