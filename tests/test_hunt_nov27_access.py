@@ -204,5 +204,31 @@ class InvitesDontRevealAccounts(ServerCase):
         self.assertEqual((res.status, out["error"]), (409, "That person is already on this team."))
 
 
+class RateLimitTableKeepsLiveCounts(unittest.TestCase):
+    def test_a_full_table_drops_expired_keys_not_live_limits(self):
+        saved = (dict(server._LIMITS), dict(server._LIMIT_WINDOWS))
+        self.addCleanup(lambda: (server._LIMITS.clear(), server._LIMITS.update(saved[0]),
+                                 server._LIMIT_WINDOWS.clear(), server._LIMIT_WINDOWS.update(saved[1])))
+        server._LIMITS.clear()
+        server._LIMIT_WINDOWS.clear()
+        with mock.patch.object(server, "LIMIT_KEYS", 50):
+            for n in range(40):
+                server._within_limit(f"short:{n}", 5, 1)
+            for _ in range(5):
+                self.assertTrue(server._within_limit("signup:203.0.113.9", 5, 3600))
+            self.assertFalse(server._within_limit("signup:203.0.113.9", 5, 3600), "used up")
+            import time
+            time.sleep(1.1)
+            for n in range(20):
+                server._within_limit(f"spray:{n}", 5, 3600)
+            self.assertFalse(any(k.startswith("short:") for k in server._LIMITS), "the expired keys went")
+            self.assertFalse(server._within_limit("signup:203.0.113.9", 5, 3600), "a live count is kept, not cleared with the rest")
+            # Past the cap with nothing expired, the longest idle go, down to nine tenths of it.
+            for n in range(100):
+                server._within_limit(f"more:{n}", 5, 3600)
+            self.assertLessEqual(len(server._LIMITS), 51)
+            self.assertIn("more:99", server._LIMITS)
+
+
 if __name__ == "__main__":
     unittest.main()

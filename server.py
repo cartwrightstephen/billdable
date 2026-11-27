@@ -381,7 +381,9 @@ def log_json(level: str, **fields) -> None:
 
 
 _LIMITS: dict = {}
+_LIMIT_WINDOWS: dict = {}   # key -> its window in seconds, so a key past it can go
 _LIMITS_LOCK = threading.Lock()
+LIMIT_KEYS = 20_000         # past this many keys, the expired ones go, then the longest idle
 
 
 def trusted_proxy_hops() -> int:
@@ -417,14 +419,31 @@ def _within_limit(key: str, count: int, seconds: int) -> bool:
     """True, and counted, when fewer than `count` events happened for `key` in the last `seconds`."""
     now = time.monotonic()
     with _LIMITS_LOCK:
-        if len(_LIMITS) > 20_000:
-            _LIMITS.clear()
+        if len(_LIMITS) > LIMIT_KEYS:
+            _evict_limits(now)
+        _LIMIT_WINDOWS[key] = max(seconds, _LIMIT_WINDOWS.get(key, 0))
         recent = [t for t in _LIMITS.get(key, []) if now - t < seconds]
         if len(recent) >= count:
             _LIMITS[key] = recent
             return False
         _LIMITS[key] = recent + [now]
         return True
+
+
+def _evict_limits(now: float) -> None:
+    """Make room in the rate-limit table (under _LIMITS_LOCK) without forgetting the counts that
+    still matter: clearing it all would let anyone who can make enough keys (new addresses, say)
+    reset everyone's limits. Keys whose window has passed go first; if that isn't enough, those
+    idle the longest, down to nine tenths of the cap."""
+    longest = 24 * 3600
+    for key in [k for k, times in _LIMITS.items() if not times or now - times[-1] >= _LIMIT_WINDOWS.get(k, longest)]:
+        _LIMITS.pop(key, None)
+        _LIMIT_WINDOWS.pop(key, None)
+    extra = len(_LIMITS) - LIMIT_KEYS * 9 // 10
+    if extra > 0:
+        for key in sorted(_LIMITS, key=lambda k: _LIMITS[k][-1] if _LIMITS[k] else 0)[:extra]:
+            _LIMITS.pop(key, None)
+            _LIMIT_WINDOWS.pop(key, None)
 
 
 class BadRequest(Exception):
