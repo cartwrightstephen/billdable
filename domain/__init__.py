@@ -7386,7 +7386,8 @@ def pay_app_text(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, 
     """The pay app as plain text, for the email body and the pencil copy."""
     out = [f"{'FINAL APPLICATION ' if invoice.get('final') else ''}{invoice['number']} — {job['name']}", job.get("address", "")]
     if invoice.get("period_to"):
-        out.append(f"Period to {invoice['period_to']}")
+        # In words, as the email's payment due date is (Nov 27 hunt); the subject keeps its date as filed.
+        out.append(f"Period to {_long_day(invoice['period_to'])}")
     out.append("")
     for line in invoice.get("lines", []):
         out.append(f"  {line['label']}: {money(line['amount_cents'])}")

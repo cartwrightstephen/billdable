@@ -69,5 +69,16 @@ class SendCheckTests(unittest.TestCase):
         self.assertEqual(inv["status"], "sent")
 
 
+class EmailPeriodTests(unittest.TestCase):
+    def test_the_email_body_gives_period_to_in_words_and_the_subject_keeps_the_date(self):
+        state, job, labor, materials = schedule_job()
+        domain.record_sov_progress(state, job["id"], {labor: "0.5"})
+        inv = draft(job)
+        inv["period_to"] = "2026-12-20"
+        self.assertIn("Period to December 20, 2026", domain.pay_app_text(state, job, inv))
+        self.assertNotIn("2026-12-20", domain.pay_app_text(state, job, inv).split("Schedule of values")[0])
+        self.assertTrue(domain.pay_app_subject(state, job, inv).endswith("period to 2026-12-20"))
+
+
 if __name__ == "__main__":
     unittest.main()
