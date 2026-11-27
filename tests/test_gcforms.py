@@ -382,3 +382,45 @@ class SendPath(Uploads):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PayappCoreValues(Uploads):
+    """Integration (Nov 27): the pay-app core's figures on the client's form."""
+
+    def schedule(self):
+        import test_payapp_core as core
+        state, job, labor, materials = core.schedule_job(retainage=10)
+        return core, state, job, labor, materials
+
+    def test_g702_5a_5b_and_stored_materials_are_values_a_form_can_take(self):
+        core, state, job, labor, materials = self.schedule()
+        for key in ("retainage_work", "retainage_stored", "stored_total", "line.stored", "total.stored"):
+            self.assertIn(key, gcforms.SOURCE)
+        domain.record_sov_progress(state, job["id"], {labor: "0.5", materials: "20"}, stored={materials: "1500"})
+        inv = core.draft(job)
+        values, rows = gcforms.payapp_values(state, job, inv)
+        # As the PDF prints them: $1,500 stored, 10% of it held (5b), the rest on work done (5a).
+        self.assertEqual((values["stored_total"], values["retainage_stored"], values["retainage_work"], values["retainage_total"]),
+                         (150_000, 15_000, 60_000, 75_000))
+        self.assertEqual(values["retainage_work"] + values["retainage_stored"], values["retainage_total"])
+        self.assertEqual(next(r for r in rows if r["description"] == "Materials")["stored"], 150_000)
+        self.assertEqual(values["total.stored"], 150_000)
+
+    def test_a_retainage_release_fills_in_and_an_earlier_pay_app_is_refused(self):
+        core, state, job, labor, materials = self.schedule()
+        domain.record_sov_progress(state, job["id"], {labor: "1", materials: "50"})
+        first = core.send(state, job)
+        domain.match_payment(state, job["id"], first["amount_cents"], "CHK-1")
+        domain.draft_retainage_release(state, job["id"], 50_000, "substantial")
+        rel = core.draft(job)
+        values, rows = gcforms.payapp_values(state, job, rel)
+        self.assertEqual((values["current_due"], values["total.this_period"]), (50_000, 0), "only the retainage released is due; no new work")
+        self.assertEqual(values["retainage_total"], 75_000, "line 5: what is still held after it")
+        # An earlier pay app (billed before Duracash) isn't filled on the client's form.
+        core2, st2, job2, labor2, materials2 = self.schedule()
+        domain.import_earlier_payapps(st2, job2["id"], {"payapps": [{"number": "1", "period_to": core.DAY, "lines": {labor2: {"pct": "20"}}}]})
+        [earlier] = domain.imported_invoices(job2)
+        stored_template(st2, "co-t", job2["payer_id"], forms.fillable_table())
+        with self.assertRaises(domain.GateError) as caught:
+            gcforms.for_invoice(st2, "co-t", job2["id"], earlier["id"], "payapp")
+        self.assertIn("billed before Duracash", str(caught.exception))

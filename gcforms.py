@@ -94,6 +94,8 @@ SOURCES: list[tuple[str, str, str, str]] = [
     ("completed_stored", "4. Total completed and stored to date", "money", "Summary"),
     ("retainage_pct", "Retainage percent", "pct", "Summary"),
     ("retainage_total", "5. Retainage to date", "money", "Summary"),
+    ("retainage_work", "5a. Retainage on completed work", "money", "Summary"),
+    ("retainage_stored", "5b. Retainage on stored materials", "money", "Summary"),
     ("earned_less_retainage", "6. Total earned less retainage", "money", "Summary"),
     ("previous_certificates", "7. Less previous certificates for payment", "money", "Summary"),
     ("current_due", "8. Current payment due", "money", "Summary"),
@@ -494,7 +496,9 @@ def payapp_values(state: dict[str, Any], job: dict[str, Any], invoice: dict[str,
         "contract_to_date": figures["contract_to_date"], "completed_stored": figures["completed"],
         "retainage_pct": pct_ret, "retainage_total": figures["retainage"], "earned_less_retainage": figures["earned"],
         "previous_certificates": figures["previous"], "current_due": figures["due"], "balance_to_finish": figures["balance"],
-        "stored_total": sum(r["stored"] or 0 for r in rows),
+        # G702 5a and 5b, and column F's total, as the PDF prints them (payapp_pdf.summary, payapp-core).
+        "retainage_work": figures.get("retainage_work", figures["retainage"]), "retainage_stored": figures.get("retainage_stored", 0),
+        "stored_total": figures.get("stored", sum(r["stored"] or 0 for r in rows)),
         "co_additions": sum(a for a in approved if a > 0), "co_deductions": -sum(a for a in approved if a < 0),
         "today": today, "checked": True,
     }
@@ -660,6 +664,8 @@ def for_invoice(state: dict[str, Any], company_id: str, job_id: str, invoice_id:
     job, inv = _find(state, job_id, invoice_id)
     if not inv:
         return None, "", ["Pay app not found."]
+    if inv.get("imported"):   # an earlier pay app (payapp-core): billed before Duracash, on whatever form it went on then
+        raise domain.GateError(f"{inv['number']} was billed before Duracash, so it isn't filled in on the client's form.")
     tpl = active(state, job.get("payer_id", ""), form_type)
     if not tpl:
         return None, "", ["This client has no form of that type."]
