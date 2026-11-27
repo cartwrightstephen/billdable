@@ -69,19 +69,29 @@ export default async function ({ BASE, step, signedInPage }) {
         phone: "(404) 555-0100", ap_email: "lou@example.com", contract_cents: 4850000 }) })).json();
       return st.jobs.find((j) => j.name === n).id;
     }, [name, json({})]);
+    const said = [];   // the page's console errors and warnings, for the message below
+    p.on("console", (m) => { if (["error", "warning"].includes(m.type())) said.push(m.text().slice(0, 200)); });
     const record = async (pct) => {
       await p.goto(`${BASE}/jobs/daily`);
-      await p.selectOption("#daily-job", id);
+      const picked = await p.selectOption("#daily-job", id);
       const box = p.locator('input[aria-label="Contract amount: % done to date"]');
       try {
         await box.waitFor({ timeout: 15000 });
       } catch (e) {
-        // Say what the form shows instead, so a failure on another machine can be read from its log.
-        const seen = await p.evaluate(() => ({ job: document.querySelector("#daily-job")?.value,
-          options: [...document.querySelectorAll("#daily-job option")].length,
-          labels: [...document.querySelectorAll("input[aria-label]")].map((i) => i.getAttribute("aria-label")).slice(0, 12),
-          text: (document.querySelector('[data-form-key="daily"]')?.innerText || document.body.innerText).slice(0, 600) }));
-        throw new Error(`No % done box for job ${id} at ${pct}%: ${JSON.stringify(seen)}`);
+        // Say what the form shows instead, so a failure on another machine can be read from its log:
+        // whether the job is in the list at all, what is picked, what this device remembers, the
+        // job's schedule as the page has it, and anything the page logged.
+        const seen = await p.evaluate(async (jid) => {
+          const sel = document.querySelector("#daily-job");
+          const st = await (await fetch("/api/state")).json();
+          const j = st.jobs.find((x) => x.id === jid);
+          return { path: location.pathname, selects: document.querySelectorAll("#daily-job").length, job: sel?.value,
+            picked: sel?.selectedOptions?.[0]?.textContent, listed: [...(sel?.options || [])].some((o) => o.value === jid),
+            options: sel?.options?.length, remembered: localStorage.getItem("duracash-daily-job"),
+            onServer: j ? { closed: !!j.closed, present: j.sov_view?.present, lines: (j.sov_view?.lines || []).map((l) => `${l.description}|${l.unit}|${l.lump_sum}|${l.done_milli}/${l.qty_milli}`) } : null,
+            labels: [...document.querySelectorAll("input[aria-label]")].map((i) => i.getAttribute("aria-label")).slice(0, 12) };
+        }, id);
+        throw new Error(`No % done box for job ${id} at ${pct}% (selectOption said ${JSON.stringify(picked)}): ${JSON.stringify(seen)} console: ${JSON.stringify(said.slice(-8))}`);
       }
       await box.fill(pct);
       await p.fill("#daily-notes", `Walked the job at ${pct}%`);
