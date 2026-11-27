@@ -2429,6 +2429,9 @@ class Handler(BaseHTTPRequestHandler):
             meta = next((f for f in state.get("files", []) if f["id"] == file_id), None)
             if not meta or meta["ext"] not in {".csv", ".xlsx", ".txt"}:
                 raise domain.GateError("That file isn't a payments export.")
+            if not profiles.may_open_file(ctx.user, state, file_id):   # a payroll or time sheet file is read only by those who may open it (H2)
+                self._json(403, {"error": SENSITIVE_WORDS})
+                return
             try:
                 text = qbo_csv.text_of(meta["ext"], importer.file_path(ctx.company_id, meta).read_bytes())
             except OSError:

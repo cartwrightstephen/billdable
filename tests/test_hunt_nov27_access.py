@@ -107,5 +107,24 @@ class TeamManagersCantHandOutMore(ServerCase):
         self.assertEqual(res.status, 200, out)
 
 
+class SensitiveFilesStayClosedEverywhere(ServerCase):
+    def test_the_payments_reader_doesnt_open_a_payroll_file_for_someone_without_the_permission(self):
+        owner, data = self.signup("payroll-csv@pine.example")
+        company_id = data["user"]["company_id"]
+        res, snap = self.request("POST", "/api/jobs", JOB, cookie=owner)
+        job_id = snap["jobs"][0]["id"]
+        res, out = self.request("POST", f"/api/import/file?job={job_id}&file=1&kind=payroll", raw=b"Name,Total\nJo Welder,1234.56\n", cookie=owner,
+                                headers={"Content-Type": "text/csv", "X-Filename": "certified-payroll.csv"})
+        self.assertEqual(res.status, 200, out)
+        file_id = next(f["id"] for f in out["files"] if f["name"] == "certified-payroll.csv")
+        auth.create_user("crew@pine.example", PASSWORD, "Cy Crew", company_id, role="member")
+        crew = "duracash_session=" + auth.create_session(auth.user_by_email("crew@pine.example"))
+        res, out = self.request("POST", "/api/import/payments-csv", {"file_id": file_id}, cookie=crew)
+        self.assertEqual(res.status, 403, out)
+        self.assertNotIn("Jo Welder", json.dumps(out))
+        res, out = self.request("POST", "/api/import/payments-csv", {"file_id": file_id}, cookie=owner)
+        self.assertEqual(res.status, 200, out)
+
+
 if __name__ == "__main__":
     unittest.main()
