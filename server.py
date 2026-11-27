@@ -3859,11 +3859,19 @@ class Handler(BaseHTTPRequestHandler):
             self._json(409, _gate(exc))
             return
         admin = is_helper_admin(user)
-        status, payload = self._mutate(company_id, lambda st: gcforms.add_template(st, payer_id, form_type, meta, info, actor, duracash=admin), user)
+        dropped: list = []   # versions past gcforms.MAX_VERSIONS: their files leave the disk (and the storage count)
+
+        def add(st: dict) -> None:
+            before = {m["id"]: m for m in gcforms.file_metas(st)}
+            gcforms.add_template(st, payer_id, form_type, meta, info, actor, duracash=admin)
+            after = {m["id"] for m in gcforms.file_metas(st)}
+            dropped.extend(m for fid, m in before.items() if fid not in after)
+        status, payload = self._mutate(company_id, add, user)
         if status != 200:
             importer.discard(company_id, [meta])
             self._json(status, payload)
             return
+        importer.discard(company_id, dropped)
         self._json(200, {**payload, "client_forms": self._client_forms_reply(company_id, payer_id, user)})
 
     def _m_client_form_match(self, state: dict, m, ctx: "Ctx") -> None:

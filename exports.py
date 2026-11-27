@@ -168,7 +168,9 @@ def write_company_archive(state: dict[str, Any], path_of: Callable[[dict[str, An
     with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
         zf.writestr(zipfile.ZipInfo("company.json"), json.dumps(domain.without_link_secrets(state), indent=2),
                     compress_type=zipfile.ZIP_DEFLATED)
-        for meta in state.get("files", []):
+        import gcforms   # the clients' blank forms are files too, kept with their templates
+        listed = {str(m.get("id")) for m in state.get("files", [])}
+        for meta in [*state.get("files", []), *(m for m in gcforms.file_metas(state) if m["id"] not in listed)]:
             if str(meta.get("id")) in leave_out:
                 skipped.append(f"{meta.get('id')}  {meta.get('name')}")
                 continue

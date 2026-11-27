@@ -98,6 +98,40 @@ class ClientFormsHttp(ServerCase):
         res, _ = self.request("GET", f"/api/payers/{payer_id}/client-forms/{first['id']}/blank.pdf", cookie=cookie)
         self.assertEqual(res.status, 200, "older versions stay")
 
+    def test_blank_forms_count_toward_storage_and_go_in_the_export(self):
+        # Integration (Nov 27): a blank is an upload like any other (importer.store_bytes): it
+        # counts toward the storage cap, is refused over it, goes in the export with files for
+        # anyone with Export (it isn't sensitive), and a version dropped past MAX_VERSIONS leaves the disk.
+        import io
+        import zipfile
+        from unittest import mock
+        import gcforms
+        import importer
+        cookie, job, payer_id = self.company("gc-forms-store@example.com")
+        _, me = self.request("GET", "/api/auth/me", cookie=cookie)
+        company_id = me["user"]["company_id"]
+        used = importer.storage_used_bytes(company_id)
+        res, out = self.upload(cookie, payer_id, forms.fillable_table())
+        self.assertEqual(res.status, 200, out)
+        import server
+        tpl = gcforms.templates(server.load_company(company_id), payer_id)[0]
+        self.assertEqual(importer.storage_used_bytes(company_id), used + len(forms.fillable_table()))
+        self.assertEqual(gcforms.blank_bytes(company_id, tpl), forms.fillable_table(), "read back as stored on disk")
+        with mock.patch.object(importer, "CAP_FOR", lambda cid: importer.storage_used_bytes(cid) + 10):
+            res, out = self.upload(cookie, payer_id, forms.saved_twice())
+            self.assertEqual(res.status, 409, out)
+            self.assertIn("storage", out["error"].lower())
+        res, raw = self.request("GET", "/api/export/with-files.zip", cookie=cookie)
+        self.assertEqual(res.status, 200)
+        zf = zipfile.ZipFile(io.BytesIO(raw))
+        name = next(n for n in zf.namelist() if n.startswith(f"files/{tpl['file_id']}-"))
+        self.assertEqual(zf.read(name), forms.fillable_table())
+        self.assertNotIn("left-out-files.txt", zf.namelist())
+        with mock.patch.object(gcforms, "MAX_VERSIONS", 1):
+            res, out = self.upload(cookie, payer_id, forms.saved_twice())
+            self.assertEqual(res.status, 200, out)
+        self.assertEqual(importer.storage_used_bytes(company_id), used + len(forms.saved_twice()), "the dropped version's file is gone")
+
     def test_another_company_sees_none_of_it(self):
         cookie, job, payer_id = self.company("gc-forms-a@example.com")
         _, out = self.upload(cookie, payer_id, forms.flat(), form_type="conditional_progress")

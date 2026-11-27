@@ -167,6 +167,14 @@ def _template(state: dict[str, Any], payer_id: str, tpl_id: str) -> dict:
     return t
 
 
+def file_metas(state: dict[str, Any]) -> list[dict]:
+    """Every client blank form kept, as file metas (importer.file_path, exports): every version,
+    retired ones too, as the history keeps them. They count toward the company's storage like any
+    upload (importer.store_bytes) and go in the export with files; none is sensitive."""
+    return [{"id": t["file_id"], "name": t.get("file_name") or "form.pdf", "ext": ".pdf", "size": t.get("size", 0), "client_form": True}
+            for t in (state.get("gc_forms") or {}).get("templates", []) if t.get("file_id")]
+
+
 def blank_bytes(company_id: str, tpl: dict) -> bytes:
     """The client's blank form as uploaded. One place reads it, so a change to how uploads are
     kept on disk changes only this."""
