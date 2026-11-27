@@ -2,7 +2,8 @@
 // in the app, by email and by text, chosen on My account and saved with that page's Save. Someone
 // new starts with each kind in the app (auth.NEW_USER_REMINDERS). The ones that fire in the app
 // are rows on the Dashboard's To Do (reminderItems). The server works out what is due (reminders.py).
-import { esc } from "../format.js";
+import { esc, fmtDate } from "../format.js";
+import { titleWithInfo } from "../dom.js";
 import { routeFromPath } from "../routes.js";
 import { readJson, postJson } from "../net.js";
 import { formErrorLine, refuseForm, clearForm } from "../forms.js";
@@ -80,13 +81,22 @@ function channelBoxes(kind, d) {
     <span class="field-error" id="reminder-${esc(kind.key)}-err"></span></fieldset>`;
 }
 
+// The card's title, its explanation behind the (i) beside it (Nov 26 walkthrough: no meta text on
+// the page itself).
+export function notificationsTitle(d) {
+  return titleWithInfo("Notifications", "About notifications",
+    `<p>For you and your team, never your clients. In the app they are rows on the Dashboard's To do.</p>
+    <p>Each comes round every ${esc(String(d.repeat_days))} days until it is dealt with; email and text go out at most once a day.</p>
+    <p>Whoever manages your team can set these for you on Settings, Team. A change you make here applies too, and they see it.</p>`);
+}
+
 // My account's Notifications card.
 export function notificationsCardHtml() {
   if (!data) return `<div class="card" id="notifications"><h2>Notifications</h2><p class="sub">Loading…</p></div>`;
   const demo = me && me.company_id === DEMO_COMPANY_ID;
   return `<div class="card" id="notifications" data-form-key="reminders">${formErrorLine("reminders")}
-      <h2>Notifications</h2>
-      <p class="sub">For you and your team, never your clients. In the app they are rows on the Dashboard's To do. Each comes round every ${esc(String(data.repeat_days))} days until it is dealt with; email and text go out at most once a day.</p>
+      ${notificationsTitle(data)}
+      ${data.set_by && data.set_by.by ? `<p class="sub" id="reminders-set-by">${esc(data.set_by.by)} set these for you${data.set_by.at ? ` on ${esc(fmtDate(data.set_by.at))}` : ""}. Any change you make here applies.</p>` : ""}
       ${data.kinds.map(k => channelBoxes(k, data)).join("")}
       ${data.can_text ? "" : `<p class="sub">To get texts, add your mobile number above and agree to texts.</p>`}
       ${notes(data)}${lastLine(data.last)}

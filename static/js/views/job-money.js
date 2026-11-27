@@ -4,10 +4,16 @@ import { money } from "../format.js";
 
 
 // open: unfolded (a phone starts it folded, Round 1 item 13); the summary line has the four figures.
-export function moneyCardHtml(j, open = true) {
+// foldable: only on a phone. On a wider screen it is a plain card with no fold arrow (Nov 26
+// walkthrough: "these arrows drive me crazy... the box is still there"): folding it there only
+// left an empty box as tall as the Pay apps card beside it.
+export function moneyCardHtml(j, open = true, foldable = true) {
   const m = j.money;
-  return `<details class="card money-file" data-more="job-money"${open ? " open" : ""}>
-          <summary><h2>Money</h2><span class="sub">${money(m.contract_total_cents)} contract · ${money(m.billed_cents)} billed · ${money(m.collected_cents)} received · ${money(m.outstanding_cents)} owed</span></summary>
+  const head = foldable
+    ? `<details class="card money-file" data-more="job-money"${open ? " open" : ""}>
+          <summary><h2>Money</h2><span class="sub">${money(m.contract_total_cents)} contract · ${money(m.billed_cents)} billed · ${money(m.collected_cents)} received · ${money(m.outstanding_cents)} owed</span></summary>`
+    : `<section class="card money-file" aria-labelledby="money-h"><h2 id="money-h">Money</h2>`;
+  return `${head}
           <div class="money-row"><span class="label">Contract</span><span>${money(m.contract_cents)}</span></div>
           <div class="money-row"><span class="label">Signed change orders</span><span>${money(m.approved_co_cents)}</span></div>
           <div class="money-row"><span class="label">Unsigned change orders</span><span>${money(m.pending_co_cents)}</span></div>
@@ -21,7 +27,7 @@ export function moneyCardHtml(j, open = true) {
           ${m.retainage_credited_cents ? `<div class="money-row"><span class="label">Signed credit taken off retainage</span><span>${money(m.retainage_credited_cents)}</span></div>` : ""}
           <div class="money-row"><span class="label">Held back, still owed</span><span>${money(m.retainage_open_cents)}</span></div>
           <div class="money-row retainage-rate"><span class="label">Retainage</span><span>${retainagePctText(j)}</span></div>
-        </details>
+        ${foldable ? "</details>" : "</section>"}
       `;
 }
 

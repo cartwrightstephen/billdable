@@ -84,10 +84,16 @@ a.btn { display: inline-block; text-decoration: none; }
 .blocker { color: var(--red); font-weight: 500; }
 .next-action { font-size: 13px; color: var(--copper); }
 .ai-badge { position: fixed; bottom: 24px; right: 24px; width: 56px; height: 56px; border-radius: 50%; background: var(--copper); color: var(--on-accent); border: none; box-shadow: 0 4px 12px var(--copper-glow); cursor: pointer; font-size: 22px; display: flex; align-items: center; justify-content: center; z-index: 1000; }
-/* Above a sticky Save bar, not over its button (round 1, item 11). The phone's sits in the top bar. */
-@media (min-width: 801px) { body:has(.save-bar) .ai-badge { bottom: 88px; } }
 .ai-panel { position: fixed; bottom: 92px; right: 24px; width: min(400px, calc(100vw - 32px)); max-height: min(620px, calc(100vh - 120px)); background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 12px 32px var(--shadow-panel); z-index: 1000; display: none; flex-direction: column; overflow: hidden; }
 .ai-panel.open { display: flex; }
+/* Lower left, fixed, at the foot of the menu beside the main pane (Nov 26 walkthrough: it sat on
+   the Save buttons and moved with the scroll bar and the Save bar). In the menu's column it never
+   covers a button or a line of the page, whatever is scrolled under it; above the name and Log out.
+   The phone's sits in the top bar. */
+@media (min-width: 801px) {
+  .ai-badge { right: auto; left: calc(220px - 48px - 16px); bottom: 88px; width: 48px; height: 48px; font-size: 20px; }
+  .ai-panel { right: auto; left: calc(220px + 16px); bottom: 24px; }
+}
 .ai-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; padding: 14px 16px 8px; border-bottom: 1px solid var(--line); }
 .ai-head h3 { margin: 0; font-family: Georgia, serif; font-weight: 500; font-size: 18px; }
 .ai-head .sub { margin: 2px 0 0; font-size: 12px; }
@@ -113,7 +119,8 @@ a.btn { display: inline-block; text-decoration: none; }
 .btn.pop { background: var(--copper); color: var(--on-accent); font-weight: 600; }
 .metric.highlight { border-color: var(--copper); background: var(--copper-soft); }
 .metric.highlight .v { color: var(--copper); }
-.detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+/* Each card as tall as its own content: one never stretches to the height of the one beside it. */
+.detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
 .money-row { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--line); }
 .money-row .label { color: var(--muted); }
 .payapp-notes { margin: 10px 0 0; white-space: pre-wrap; }
@@ -271,10 +278,14 @@ a.reset-btn { display: block; text-decoration: none; text-align: left; }
 /* Import */
 .dropzone { border: 2px dashed var(--line); border-radius: 10px; padding: 18px; margin: 12px 0; background: var(--card); display: flex; flex-direction: column; gap: 6px; }
 .dropzone.small { padding: 12px; }
-/* A unit after a box: Retainage [ 10 ] % */
-.with-suffix { display: flex; align-items: center; gap: 6px; }
-.with-suffix input { flex: 1 1 auto; min-width: 0; }
-.with-suffix .suffix { color: var(--muted); font-weight: 600; }
+/* A unit inside the box, at its right edge: Retainage [ 10    % ] (Nov 26 walkthrough: "show the
+   percentage sign inside the entry field"). The box keeps room for it on the right. */
+.with-suffix { position: relative; display: block; }
+.with-suffix input { width: 100%; min-width: 0; padding-right: 2em; }
+.with-suffix .suffix { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--muted); font-weight: 600; pointer-events: none; }
+/* In a table cell (the schedule's % done to date) the box stays its own width. */
+.with-suffix.inline { display: inline-block; }
+.with-suffix.inline input { width: 6em; }
 /* The camera is a phone's way in (R6-04): Take a photo and Choose files as buttons on a touch
    screen; the drop-and-paste sentence only where there is a mouse to drop with. */
 .capture-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -498,8 +509,12 @@ textarea { font: inherit; }
 @media (max-width: 420px) {
   .metrics { grid-template-columns: 1fr; }
 }
-/* Touch screens and phone widths: every control at least 44 px tall (WCAG 2.5.5 target size). */
-@media (pointer: coarse), (max-width: 600px) {
+/* The main buttons (Save, New job, New job record, Send) are 44 px tall at every width (Nov 26
+   walkthrough: tapped on an iPad); text stays centred in a link styled as one. */
+.btn:not(.small) { min-height: 44px; }
+a.btn { display: inline-flex; align-items: center; justify-content: center; }
+/* Touch screens and up to tablet width (an iPad at 768 to 1024): every control at least 44 px tall. */
+@media (pointer: coarse), (max-width: 1024px) {
   .btn, .btn.small, .tab, .stage, .due-item, .back, select, input:not([type=checkbox]), .filter-bar button, .chip, .nav button { min-height: 44px; }
   /* A link-like button inside a sentence keeps the line's height; its touch area grows
      invisibly around it instead (R6-02). One on its own line is simply tall. */
@@ -945,3 +960,20 @@ fieldset.co-items legend, fieldset.co-backup legend { color: var(--muted); font-
 .metrics.fin-tiles { grid-template-columns: repeat(4, 1fr); }
 @media (max-width: 1000px) { .metrics.fin-tiles { grid-template-columns: 1fr 1fr; } }
 #fin-report th.num, #fin-report td.num { text-align: right; font-variant-numeric: tabular-nums; }
+/* A section title's (i) explanation (titleWithInfo, js/dom.js): a small round i beside the title;
+   tapped, its words open in a box under it, over the page. */
+.title-info { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; position: relative; margin-bottom: 8px; }
+.title-info > h2, .title-info > h3 { margin: 0; }
+.info-pop { position: static; }
+.info-pop > summary { list-style: none; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--muted); color: var(--muted); font: italic 600 13px/1 Georgia, serif; cursor: pointer; }
+.info-pop > summary::-webkit-details-marker { display: none; }
+.info-pop[open] > summary { background: var(--copper-soft); color: var(--copper); border-color: var(--copper); }
+.info-pop-body { position: absolute; left: 0; top: calc(100% + 6px); z-index: 50; max-width: min(460px, calc(100vw - 48px)); padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); box-shadow: 0 6px 18px var(--shadow); font-size: 14px; line-height: 1.45; color: var(--ink); }
+.info-pop-body p { margin: 0 0 6px; }
+.info-pop-body p:last-child { margin-bottom: 0; }
+@media (pointer: coarse), (max-width: 1024px) {
+  .info-pop > summary { width: 32px; height: 32px; position: relative; }
+  .info-pop > summary::after { content: ""; position: absolute; inset: -6px; }
+}
+.profile-templates { margin-bottom: 12px; }
+.profile-templates .seg { flex-wrap: wrap; margin: 4px 0; }

@@ -304,7 +304,7 @@ class SheetQuantityTests(unittest.TestCase):  # Stephen's Oct 29 review, M2
 
     def sheet_rows(self, inv):
         pdf = pdf_text(self.state, self.job, inv)
-        return [r.decode("latin-1").replace("\\(", "(").replace("\\)", ")") for r in re.findall(rb"/F3 8 Tf [\d.]+ [\d.]+ Td \((.*?)\) Tj", pdf)]
+        return [r.decode("latin-1").replace("\\(", "(").replace("\\)", ")") for r in re.findall(rb"/F3 %d Tf [\d.]+ [\d.]+ Td \((.*?)\) Tj" % payapp_pdf.SHEET_SIZE, pdf)]
 
     def test_the_pdf_sheet_has_qty_to_date_and_nothing_runs_off_the_page(self):
         rows = self.sheet_rows(self.third)
@@ -315,7 +315,7 @@ class SheetQuantityTests(unittest.TestCase):  # Stephen's Oct 29 review, M2
         self.assertIn("180 ea", rough)
         panel = next(r for r in rows if r.startswith("2 "))
         self.assertNotIn(" LS", panel, "a lump sum has no quantity")
-        usable = (payapp_pdf.PAGE_W - 2 * payapp_pdf.MARGIN) / (0.6 * 8)
+        usable = (payapp_pdf.PAGE_W - 2 * payapp_pdf.MARGIN) / (0.6 * payapp_pdf.SHEET_SIZE)
         self.assertTrue(all(len(r) <= usable for r in rows), max(len(r) for r in rows))
 
     def test_the_client_page_and_the_email_text_have_it_too(self):
@@ -327,3 +327,23 @@ class SheetQuantityTests(unittest.TestCase):  # Stephen's Oct 29 review, M2
         for words in ("Contract sum", "Approved change orders", "Completed and stored to date", "Prior payments received", "Current amount due"):
             self.assertIn(words, page)
         self.assertIn("Qty to date", sov.continuation_sheet(self.job, self.third))
+
+
+class PortraitTests(unittest.TestCase):  # Nov 26 walkthrough: "It should be vertical"
+    setUp = MonthTwoTests.setUp
+
+    def test_every_page_is_portrait_letter(self):
+        pdf = pdf_text(self.state, self.job, self.third)
+        boxes = re.findall(rb"/MediaBox \[0 0 (\d+) (\d+)\]", pdf)
+        self.assertTrue(boxes)
+        self.assertTrue(all(box == (b"612", b"792") for box in boxes), boxes)
+
+    def test_a_long_description_wraps_instead_of_being_cut(self):
+        sheet_line = next(e for e in self.third["sov_sheet"] if e["line_id"] == self.rough)
+        sheet_line["description"] = "Rough-in wiring for the second floor offices and the corridor lights"
+        rows = SheetQuantityTests.sheet_rows(self, self.third)
+        text = " ".join(r[6:21].strip() for r in rows)
+        self.assertIn("Rough-in wiring for the second floor offices and the corridor lights", " ".join(text.split()))
+        self.assertFalse(any("…" in r for r in rows))
+        usable = (payapp_pdf.PAGE_W - 2 * payapp_pdf.MARGIN) / (0.6 * payapp_pdf.SHEET_SIZE)
+        self.assertTrue(all(len(r) <= usable for r in rows), max(len(r) for r in rows))

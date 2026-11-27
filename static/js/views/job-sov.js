@@ -105,7 +105,7 @@ function sovEditorHtml(j) {
     <div class="form-inline">
       <button class="btn small secondary" data-action="sov-add">Add line</button>
       <label for="sov-op" class="sov-op-label">Overhead and profit</label>
-      <input id="sov-op" class="sov-in sov-num" data-sov-field="op_pct" value="${esc(sovDraft.op_pct)}" inputmode="decimal"> %
+      <span class="with-suffix inline"><input id="sov-op" class="sov-in sov-num" data-sov-field="op_pct" value="${esc(sovDraft.op_pct)}" inputmode="decimal"><span class="suffix" aria-hidden="true">%</span></span>
     </div>
     <div class="sov-sums">
       <div class="money-row"><span class="label">Schedule lines</span><span id="sov-sum-lines"></span></div>

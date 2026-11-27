@@ -85,3 +85,15 @@ export function focusAfterDraw(find) {
     find()?.focus();
   });
 }
+
+// A section title with a small (i) beside it that opens the section's explanation (Nov 26
+// walkthrough: "a little i pop up somewhere on top of notifications"): the "for you and your
+// team" kind of words stay out of the page and are one tap away. A <details>, so it needs no
+// script, opens by tap or keyboard, and a screen reader announces it as a disclosure. title and
+// label are raw text; body is HTML the caller has escaped.
+export function titleWithInfo(title, label, body, { level = 2, id = "" } = {}) {
+  const t = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return `<div class="title-info"><h${level}${id ? ` id="${id}"` : ""}>${t(title)}</h${level}>`
+    + `<details class="info-pop"><summary aria-label="${t(label)}" title="${t(label)}"><span aria-hidden="true">i</span></summary>`
+    + `<div class="info-pop-body" role="note">${body}</div></details></div>`;
+}

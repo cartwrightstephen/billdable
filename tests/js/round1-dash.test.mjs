@@ -93,7 +93,9 @@ test("accessibility: (i) icons are out of the Tab order and describe their field
 
 test("accessibility: the ? badge clears a sticky Save bar, a disabled button stays readable, and a toast leaves the tab row alone", () => {  // item 11, small
   const css = src("styles.css");
-  assert.match(css, /body:has\(\.save-bar\) \.ai-badge \{ bottom: \d+px; \}/);
+  // Nov 26 walkthrough: lower left, at the foot of the menu, the same place on every page, over no button.
+  assert.match(css, /\.ai-badge \{ right: auto; left: calc\(220px - 48px - 16px\); bottom: 88px;/);
+  assert.doesNotMatch(css, /body:has\(\.save-bar\) \.ai-badge/);
   assert.doesNotMatch(css, /\.btn:disabled \{ opacity: 0\.45;/);
   assert.match(css, /\.btn:disabled \{ opacity: 1; background: var\(--field-bg\); color: var\(--muted\);/);
   const toast = /\n\.toast \{([^}]*)\}/.exec(css)[1];
