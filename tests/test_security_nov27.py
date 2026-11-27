@@ -160,6 +160,41 @@ class SecurityHttpTests(unittest.TestCase):
 
     # ----- L1: routes their neighbours' permission -----
 
+    def test_the_export_with_files_leaves_sensitive_files_out_without_the_permission(self):
+        # sec2b's export with files (L4) is gated by "data"; its payroll and other sensitive files
+        # also take "See payroll and sensitive documents" (H2), like /api/files/<id>.
+        import zipfile
+        payroll = self.add_file("payroll", "wh-347.pdf")
+        sheet = self.add_file("ticket", "week-12.pdf", ticket_type="time_sheet")
+        photo = self.add_file("photo", "wall.jpg")
+        res, saved = self.request("POST", "/api/team/profiles", {"name": "Bookkeeper", "perms": ["data"]}, cookie=self.owner)
+        self.assertEqual(res.status, 200, saved)
+        keeper = next(p for p in saved["profiles"] if p["name"] == "Bookkeeper") if "profiles" in saved else saved["profile"]
+        user = auth.user_by_email(f"field{self.n}@example.com")
+        res, out = self.request("POST", f"/api/team/{user['id']}/role", {"profile_id": keeper["id"]}, cookie=self.owner)
+        self.assertEqual(res.status, 200, out)
+        member = self.signin(f"field{self.n}@example.com")
+
+        def names(cookie):
+            res, raw = self.request("GET", "/api/export/with-files.zip", cookie=cookie)
+            self.assertEqual(res.status, 200)
+            zf = zipfile.ZipFile(io.BytesIO(raw))
+            return zf, zf.namelist()
+
+        def has(got, fid):
+            return any(n.startswith(f"files/{fid}-") for n in got)
+
+        zf, got = names(member)
+        self.assertTrue(has(got, photo))
+        self.assertFalse(has(got, payroll))
+        self.assertFalse(has(got, sheet))
+        listed = zf.read("left-out-files.txt").decode()
+        self.assertIn(payroll, listed)
+        self.assertIn("See payroll and sensitive documents", listed)
+        _, got = names(self.owner)
+        self.assertTrue(all(has(got, f) for f in (photo, payroll, sheet)), "an owner holds every permission")
+        self.assertNotIn("left-out-files.txt", got)
+
     def test_metrics_reconcile_audit_and_retry_take_their_permission(self):
         for path in ("/api/metrics", "/api/qbo/reconcile", "/api/audit"):
             res, data = self.request("GET", path, cookie=self.member)

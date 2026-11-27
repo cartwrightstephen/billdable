@@ -153,18 +153,25 @@ def _file_name(meta: dict[str, Any]) -> str:
     return f"files/{meta.get('id', 'file')}-{name}"
 
 
-def write_company_archive(state: dict[str, Any], path_of: Callable[[dict[str, Any]], Path], out: BinaryIO) -> dict[str, int]:
+def write_company_archive(state: dict[str, Any], path_of: Callable[[dict[str, Any]], Path], out: BinaryIO,
+                          leave_out: set[str] | frozenset[str] = frozenset()) -> dict[str, int]:
     """A zip of the company's export (company.json, as GET /api/export gives it) and every file
     it holds, under files/<file id>-<name>; company.json's "files" list names each one. Files
     are stored as they are (photos and PDFs are compressed already), read one at a time, so a
     large company never sits in memory. A file missing on disk is listed in missing-files.txt.
-    Returns {"files", "missing"}."""
+    `leave_out`: file ids whose contents stay out (payroll and other sensitive documents for someone
+    without "See payroll and sensitive documents", H2); they are listed in left-out-files.txt.
+    Returns {"files", "missing", "left_out"}."""
     missing: list[str] = []
+    skipped: list[str] = []
     count = 0
     with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
         zf.writestr(zipfile.ZipInfo("company.json"), json.dumps(domain.without_link_secrets(state), indent=2),
                     compress_type=zipfile.ZIP_DEFLATED)
         for meta in state.get("files", []):
+            if str(meta.get("id")) in leave_out:
+                skipped.append(f"{meta.get('id')}  {meta.get('name')}")
+                continue
             source = path_of(meta)
             if not source.is_file():
                 missing.append(f"{meta.get('id')}  {meta.get('name')}")
@@ -173,5 +180,8 @@ def write_company_archive(state: dict[str, Any], path_of: Callable[[dict[str, An
             count += 1
         if missing:
             zf.writestr("missing-files.txt", "These files are listed in company.json but were not found on the server:\n" + "\n".join(missing) + "\n")
-    return {"files": count, "missing": len(missing)}
+        if skipped:
+            zf.writestr("left-out-files.txt", "These files are payroll, time sheets, lien waivers or contracts. Opening them needs the "
+                        "permission \"See payroll and sensitive documents\", so they were left out of this export:\n" + "\n".join(skipped) + "\n")
+    return {"files": count, "missing": len(missing), "left_out": len(skipped)}
 

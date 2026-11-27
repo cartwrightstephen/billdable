@@ -1898,7 +1898,9 @@ class Handler(BaseHTTPRequestHandler):
         import tempfile
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
         with tempfile.TemporaryFile() as tmp:
-            exports.write_company_archive(state, lambda meta: importer.file_path(user["company_id"], meta), tmp)
+            # Payroll, time sheets, waivers and contracts only for those who may open them (H2).
+            leave_out = set() if has_perm(user, "sensitive_docs", state) else profiles.sensitive_file_ids(state)
+            exports.write_company_archive(state, lambda meta: importer.file_path(user["company_id"], meta), tmp, leave_out)
             size = tmp.tell()
             tmp.seek(0)
             self.send_response(200)
