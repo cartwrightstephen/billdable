@@ -69,19 +69,27 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.goto(BASE + "/jobs/daily");
     await p.locator("#daily-job").waitFor();
     assert.equal(await p.inputValue("#daily-job"), jobId);
-    await p.fill("#daily-crew", "3");
     await p.selectOption("#daily-weather", "Rain");
     await p.fill("#daily-notes", "Set the ledger board");
-    // Each kind of document is a chip that opens its section (Round 1, item 15).
-    assert.equal(await p.locator("[data-record-section]").count(), 0, "no document section until its chip is tapped");
-    for (const chip of ["+ Delivery ticket", "+ Photos", "+ Time sheet", "+ Invoice", "+ Inspection", "+ Other"]) await p.getByRole("button", { name: chip, exact: true }).click();
+    // The time sheet is always there, rows of crew member and hours (Nov 26); the crew count box is gone.
+    assert.equal(await p.locator("#daily-crew").count(), 0);
+    await p.selectOption("#daily-ts-pick-0", "__other");
+    await p.fill("#daily-ts-name-0", "Ana");
+    await p.fill("#daily-ts-hours-0", "8");
+    await p.getByRole("button", { name: "Add a person" }).click();
+    await p.selectOption("#daily-ts-pick-1", "__other");
+    await p.fill("#daily-ts-name-1", "Ben (day labor)");
+    await p.locator("#daily-ts-hours-1").pressSequentially("16x");
+    assert.equal(await p.inputValue("#daily-ts-hours-1"), "16", "hours take numbers only");
+    await p.locator("#daily-ts-total", { hasText: "Total: 24 h" }).waitFor();
+    // Each other kind of document is a chip that opens its section (Round 1, item 15).
+    assert.equal(await p.locator('[data-record-section]:not([data-record-section="time_sheets"])').count(), 0, "no document section until its chip is tapped");
+    for (const chip of ["+ Delivery ticket", "+ Photos", "+ Invoice", "+ Inspection", "+ Other"]) await p.getByRole("button", { name: chip, exact: true }).click();
     assert.equal(await p.inputValue("#daily-notes"), "Set the ledger board", "opening a section keeps what was typed");
     await p.fill("#daily-delivery-supplier-0", "ABC Supply");
     await p.locator("#daily-delivery_0-files").setInputFiles(jpg("ticket.jpg"));
     await p.locator(".daily-files", { hasText: "ticket.jpg" }).waitFor();
     await p.locator("#daily-photos_0-files").setInputFiles([jpg("deck1.jpg"), jpg("deck2.jpg")]);
-    await p.fill("#daily-time_sheets-who-0", "Ana's crew");
-    await p.fill("#daily-time_sheets-hours-0", "24");
     await p.fill("#daily-invoices-supplier-0", "ABC Supply");
     await p.fill("#daily-inspections-who-0", "City inspector");
     await p.selectOption("#daily-other-kind-0", "insurance");
@@ -100,14 +108,15 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     const st = await p.evaluate(async () => await (await fetch("/api/state")).json());
     const saved = st.daily_records.slice(-1)[0];
     assert.equal(saved.weather, "Rain");
-    assert.equal(saved.crew_count, 3);
+    assert.equal(saved.crew_count, 2, "the crew count comes from the time sheet's rows");
+    assert.deepEqual(saved.crew_names, ["Ana", "Ben (day labor)"]);
     assert.equal(saved.attachments.length, 3);
     const records = st.jobs.find((j) => j.id === jobId).records;
     const has = (label, kind) => assert.ok(records.some((r) => r.label === label && r.kind === kind), label);
     has("Delivery ticket: ABC Supply", "ticket");
     has("Progress photo: deck1.jpg", "photo");
     has("Progress photo: deck2.jpg", "photo");
-    has("Time sheet: Ana's crew", "ticket");
+    has("Time sheet: 2 crew, 24 h", "ticket");
     has("Invoice: ABC Supply", "supplier_invoice");
     has("Inspection: City inspector", "inspection");
     has("COI 2026", "insurance");

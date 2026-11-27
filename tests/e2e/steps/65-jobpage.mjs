@@ -1,4 +1,5 @@
-// Browser steps for the job page's actions: all of them showing, and Log a conversation. Run by tests/e2e/smoke.mjs.
+// Browser steps for the job page's actions: all of them showing, and a conversation through New job
+// record (Nov 26: Log a conversation is gone). Run by tests/e2e/smoke.mjs.
 import assert from "node:assert/strict";
 
 export default async function ({ BASE, step, signedInPage, confirmDialog }) {
@@ -8,21 +9,23 @@ export default async function ({ BASE, step, signedInPage, confirmDialog }) {
     return j && j.id;
   });
 
-  await step("Log a conversation: a record on the job that holds the follow-up until its date", async () => {
+  await step("A conversation goes through New job record: a record on the job that holds the follow-up until its date", async () => {
     const p = await signedInPage({ width: 1280, height: 900 });
     const id = await waitingJob(p);
     assert.ok(id, "the demo has a job waiting for payment");
     await p.goto(`${BASE}/jobs/${id}`);
     await p.locator(".job-actions").waitFor();
-    assert.equal(await p.getByRole("button", { name: /Spoke to them/ }).count(), 0);
-    await p.getByRole("button", { name: "Log a conversation" }).click();
-    await p.click('[data-action="save-conversation"]');
-    await p.locator('[data-form-key="conversation"] .field-error', { hasText: "Enter what they said" }).waitFor();
-    await p.fill("#conversation-text", "Check run is the 5th");
+    assert.equal(await p.getByRole("button", { name: "Log a conversation" }).count(), 0, "gone from the job page (Nov 26)");
+    await p.locator('[data-action="daily-for-job"]').first().click();
+    await p.getByRole("heading", { name: "New job record" }).waitFor();
+    assert.equal(await p.getByRole("button", { name: "Log a conversation" }).count(), 0, "and from New job record");
+    await p.getByRole("button", { name: "+ Conversation / note with client", exact: true }).click();
+    await p.fill("#daily-conversation-text-0", "Check run is the 5th");
     const next = new Date(Date.now() + 5 * 86400000).toISOString().slice(0, 10);
-    await p.fill("#conversation-next", next);
-    await p.click('[data-action="save-conversation"]');
-    await p.locator("#conversation-text").waitFor({ state: "detached" });
+    await p.fill("#daily-conversation-next_on-0", next);
+    await p.locator('[data-action="daily-save"]').click();
+    await p.locator(".saved-result", { hasText: "1 conversation" }).waitFor();
+    await p.goto(`${BASE}/jobs/${id}`);
     await p.locator('.record-group[data-group="conversation"]', { hasText: "Check run is the 5th" }).waitFor();
     const job = await p.evaluate(async (jid) => (await (await fetch("/api/state")).json()).jobs.find((j) => j.id === jid), id);
     assert.equal(job.expected_payment_on, next);
@@ -53,26 +56,25 @@ export default async function ({ BASE, step, signedInPage, confirmDialog }) {
     assert.ok(Math.abs(boxes[0][1] - boxes[3][1]) <= 1, "same width");
     // A fold opened stays open after the page redraws.
     await p.locator("details.money-file > summary").click();
-    await p.getByRole("button", { name: "Log a conversation" }).click();
+    await p.getByRole("button", { name: "New Change Order" }).click();
     assert.equal(await p.locator("details.money-file").getAttribute("open"), "");
     await p.context().close();
   });
 
-  await step("Log a conversation from New job record: the same form, with its check-again date, for the job picked", async () => {  // criterion 59
+  await step("A conversation on New job record keeps what was typed, with its check-again date, for the job picked", async () => {  // criterion 59, Nov 26
     const p = await signedInPage({ width: 375, height: 800 });
     const id = await waitingJob(p);
-    await p.goto(`${BASE}/jobs/${id}`);
-    await p.locator(".job-actions").waitFor();
-    await p.locator('[data-action="daily-for-job"]').first().click();
-    await p.getByRole("heading", { name: "New job record" }).waitFor();
+    await p.goto(`${BASE}/jobs/daily`);
+    await p.locator("#daily-job").waitFor();
+    await p.selectOption("#daily-job", id);
     await p.fill("#daily-notes", "Typed before the call");
-    await p.getByRole("button", { name: "Log a conversation" }).click();
-    await p.fill("#conversation-text", "Check goes out Friday");
-    const next = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
-    await p.fill("#conversation-next", next);
-    await p.click('[data-action="save-conversation"]');
-    await p.locator("#conversation-text").waitFor({ state: "detached" });
+    await p.getByRole("button", { name: "+ Conversation / note with client", exact: true }).click();
     assert.equal(await p.inputValue("#daily-notes"), "Typed before the call", "the record being written stays");
+    await p.fill("#daily-conversation-text-0", "Check goes out Friday");
+    const next = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+    await p.fill("#daily-conversation-next_on-0", next);
+    await p.locator('[data-action="daily-save"]').click();
+    await p.locator(".saved-result", { hasText: "1 conversation" }).waitFor();
     const job = await p.evaluate(async (jid) => (await (await fetch("/api/state")).json()).jobs.find((j) => j.id === jid), id);
     assert.equal(job.expected_payment_on, next);
     assert.ok(job.records.some((r) => r.kind === "conversation" && /Check goes out Friday/.test(`${r.label} ${r.note}`)));
@@ -84,7 +86,8 @@ export default async function ({ BASE, step, signedInPage, confirmDialog }) {
     const id = await p.evaluate(async () => (await (await fetch("/api/state")).json()).jobs.find((j) => !j.closed && !j.sov_view.present && j.work_status !== "complete" && !j.invoices.some((i) => ["draft", "awaiting_approval"].includes(i.status)))?.id);
     assert.ok(id, "the demo has a job with no schedule");
     await p.goto(`${BASE}/jobs/${id}`);
-    await p.locator('.main-actions [data-form="progress"]').click();
+    await p.locator('.main-actions [data-action="progress-open"]').click();
+    await p.waitForURL(`${BASE}/money/new-pay-app/${id}`);   // its own page (Nov 26)
     await p.locator(".progress-context", { hasText: "Billed so far" }).waitFor();
     await p.fill("#progress-draw", "3,000");
     assert.equal(await p.locator("#progress-preview").innerText(), "This pay app: $3,000.00.");

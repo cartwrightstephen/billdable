@@ -40,7 +40,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.context().close();
   });
 
-  await step("New pay app on Money > Pay apps asks for the job, then opens that job's Progress pay app form", async () => {  // G10
+  await step("New pay app on Money > Pay apps asks for the job, then opens that job's Progress pay app page", async () => {  // G10, Nov 26
     const p = await signedInPage({ width: 1280, height: 900 });
     await p.goto(`${BASE}/money`);
     await p.getByRole("heading", { name: "Pay apps" }).waitFor();
@@ -53,7 +53,7 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await p.selectOption("#new-payapp-job", "job-grant");
     await p.click('[data-action="payapp-new-open"]');
     await p.locator('[data-form-key="progress"], [data-form-key="sovprogress"]').first().waitFor();
-    assert.equal(new URL(p.url()).pathname, "/jobs/job-grant");
+    assert.equal(new URL(p.url()).pathname, "/money/new-pay-app/job-grant", "its own page (Nov 26)");
     await p.context().close();
   });
 
@@ -87,8 +87,12 @@ export default async function ({ browser, page, BASE, step, signedInPage, confir
     await card.locator(".sov-period", { hasText: "35 LF" }).waitFor();
     assert.match(await card.locator(".sov-suggested").innerText(), /\$1,750\.00/);
     await p.locator(".main-actions .main-progress").click();
+    await p.waitForURL(`${BASE}/money/new-pay-app/${made.id}`);   // its own page (Nov 26)
     assert.equal(await p.inputValue(`#sovp-done-${made.conduit}`), "35");
     await p.click('[data-action="sov-progress"]');
+    await p.waitForURL(/\/money\/pay-app\//);   // drafted: the draft's own page, to review and send
+    await p.goto(`${BASE}/jobs/${made.id}`);
+    if (await card.getAttribute("open") === null) await card.locator(":scope > summary").click();
     await p.locator(`#sova-${made.conduit}`).waitFor();
     assert.equal(await p.inputValue(`#sova-${made.conduit}`), "1750.00");
     await p.fill(`#sova-${made.conduit}`, "1500.25");
