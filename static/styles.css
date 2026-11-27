@@ -1023,3 +1023,11 @@ fieldset.co-items legend, fieldset.co-backup legend { color: var(--muted); font-
 @media (max-width: 640px) {
   #app .money-strip .strip-item { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 0; }
 }
+
+/* Boxes outside a form-grid that kept the browser's own look (Nov 27 hunt: an inset black box in
+   monospace, white in the dark theme): a lien deadline's Done on day, the reminder days on
+   Compliance and Import's Which job?. */
+.compliance-done input, [data-form-key="csettings"] input, .upload-job select {
+  padding: 6px 8px; border: 1px solid var(--field); border-radius: 6px; font: inherit; color: var(--ink); background: var(--field-bg); min-height: 34px;
+}
+[data-form-key="csettings"] input { width: 100%; max-width: 320px; }
