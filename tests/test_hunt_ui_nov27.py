@@ -80,5 +80,25 @@ class EmailPeriodTests(unittest.TestCase):
         self.assertTrue(domain.pay_app_subject(state, job, inv).endswith("period to 2026-12-20"))
 
 
+class ReleaseChecksTests(unittest.TestCase):
+    def test_a_retainage_release_asks_no_work_checks_and_keeps_its_hard_stops(self):
+        from test_payapp_core import send
+        import approve_help
+        state, job, labor, materials = schedule_job(retainage=10, packet="Invoice, Daily tickets, Time sheets, Progress photos")
+        domain.record_sov_progress(state, job["id"], {labor: "1", materials: "50"})
+        work = draft(job)
+        self.assertTrue(domain.soft_checks_waiting(job, work), "a work pay app asks them")
+        for item in work["packet"]:
+            if domain.item_gate(job, item) == "soft":
+                domain.soft_check_packet_item(state, job["id"], item["id"], "checked")
+        send(state, job)
+        domain.match_payment(state, job["id"], work["amount_cents"], "CHK-1")
+        domain.draft_retainage_release(state, job["id"], 50_000, "substantial")
+        rel = draft(job)
+        self.assertEqual(domain.soft_checks_waiting(job, rel), [])
+        self.assertFalse([i for i in rel["packet"] if domain.item_gate(job, i) == "soft" and i.get("required")])
+        self.assertTrue(any(str(i.get("waiver_kind", "")).startswith("conditional") for i in rel["packet"]), "the conditional waiver stays")
+
+
 if __name__ == "__main__":
     unittest.main()
