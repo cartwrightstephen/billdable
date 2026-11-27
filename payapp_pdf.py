@@ -356,11 +356,19 @@ def render(company: dict[str, Any] | str, job: dict[str, Any], payer: dict[str, 
         # the quantity completed to date (Stephen's Oct 29 review, M2), G completed and stored to
         # date, G/C, H balance, I retainage at the job's percent. 127 Courier characters at 7 pt
         # fit the 540 pt between a portrait page's margins; a description longer than its column
-        # goes on to the lines below, so nothing is cut short.
+        # goes on to the lines below, so nothing is cut short. Figures of $10 million and more
+        # (a totals row, most often) widen the money columns and the type gets smaller to fit, so
+        # the columns stay under their headings and inside the margin.
         widths = [5, 15, 12, 12, 12, 11, 11, 12, 4, 12, 11]
         heads = ["Item", "Description", "Scheduled", "Previous", "This period", "Stored", "Qty to date", "To date", "%", "Balance", "Retainage"]
         pct_ret = int(invoice.get("retainage_pct", job.get("retainage_pct")) or 0)   # as held on this pay app (R4-07)
-        size = SHEET_SIZE
+        rows_in = [(int(e.get("scheduled_cents") or 0), int(e.get("to_date_cents") or 0)) for e in sheet]
+        rows_in += [(r["scheduled_cents"], r["to_date_cents"]) for r in sov.co_rows(job, invoice)]
+        # No figure on the sheet is larger: the scheduled or to-date column's total, with overhead and profit.
+        largest = max(sum(abs(a) for a, _b in rows_in), sum(abs(b) for _a, b in rows_in)) + terms_for(job, invoice)["op_scheduled_cents"]
+        need = len(f"{'-' if any(a < 0 or b < 0 for a, b in rows_in) else ''}{largest / 100:,.2f}")
+        widths = [max(w, need) if i in (2, 3, 4, 5, 7, 9, 10) else w for i, w in enumerate(widths)]
+        size = min(SHEET_SIZE, (PAGE_W - 2 * MARGIN) / ((sum(widths) + len(widths) - 1) * 0.6))
 
         def row_text(cells: list[str]) -> str:
             out = []

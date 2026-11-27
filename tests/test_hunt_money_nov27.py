@@ -156,5 +156,36 @@ class WithdrawnQuickBooksInvoiceTests(unittest.TestCase):
         self.assertIn("QuickBooks invoice PA-PINE-01 still shows $4,500.00", " ".join(str(a) for a in state["audit"][-3:]))
 
 
+
+class LargeFiguresOnTheSheetTests(unittest.TestCase):
+    def test_ten_million_dollars_stays_in_its_column_and_inside_the_margin(self):
+        """Figures of $10 million and more ran one character past the 12 the money columns held:
+        each such row shifted right of its headings and past the right margin."""
+        import re
+        import payapp_pdf
+        import sov
+        import test_packet
+        state = test_packet.new_state()
+        job = test_packet.new_job(state, contract=2_500_000_000, retainage=10, packet="Invoice.")
+        domain.save_sov(state, job["id"], [{"item": "1", "description": "Structure", "quantity": "1", "unit": "LS", "rate": "15000000"},
+                                           {"item": "2", "description": "Finishes", "quantity": "1", "unit": "LS", "rate": "10000000"}], "")
+        a, b = (line["id"] for line in sov.lines(job))
+        domain.record_sov_progress(state, job["id"], {a: "0.8", b: "0.5"})
+        inv = send(state, job)
+        pdf = payapp_pdf.render({"name": "Co"}, job, {}, inv)
+        rows = [(float(size), float(x), text.decode()) for size, x, text in re.findall(rb"BT /F3 ([\d.]+) Tf ([\d.]+) [\d.]+ Td \((.*?)\) Tj", pdf)
+                if float(size) < 7.5]
+        self.assertTrue(any("Totals" in t and "25,000,000.00" in t for _s, _x, t in rows))
+        lengths = {len(t) for _s, _x, t in rows if t.startswith(("Item", "1 ", "2 ", "  "))}
+        self.assertEqual(len(lengths), 1, "every row as long as the headings")
+        for size, x, text in rows:
+            self.assertLessEqual(x + len(text) * 0.6 * size, payapp_pdf.PAGE_W - payapp_pdf.MARGIN + 0.01, text)
+        # A small job keeps its 7 pt type.
+        state, job, labor, _materials = schedule_job(retainage=10)
+        domain.record_sov_progress(state, job["id"], {labor: "0.5"})
+        pdf = payapp_pdf.render({"name": "Co"}, job, {}, send(state, job))
+        self.assertIn(b"/F3 7 Tf", pdf)
+
+
 if __name__ == "__main__":
     unittest.main()
