@@ -153,6 +153,61 @@ def discard(company_id: str, metas: list[dict[str, Any]]) -> None:
             pass
 
 
+# ---------- storage per company (security review H5) ----------
+
+STORAGE_CAP_MB_DEFAULT = 2048        # a subscribed company: 2 GB of files
+TRIAL_STORAGE_CAP_MB_DEFAULT = 1024  # a company not (yet) subscribed: 1 GB
+
+
+def _mb_setting(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.environ.get(name) or default))
+    except ValueError:
+        return default
+
+
+def storage_cap_bytes(state: dict[str, Any] | None) -> int:
+    """How much a company may keep in uploaded files: DURACASH_STORAGE_CAP_MB (default 2048) once
+    it has a subscription or is a design partner; DURACASH_TRIAL_STORAGE_CAP_MB (default 1024)
+    before then. The Stripe record is read straight from the state (billing.record's place)."""
+    b = (((state or {}).get("company") or {}).get("billing") or {})
+    subscribed = b.get("partner") or b.get("status") in {"trialing", "active", "past_due", "incomplete"}
+    if subscribed:
+        return _mb_setting("DURACASH_STORAGE_CAP_MB", STORAGE_CAP_MB_DEFAULT) * 1024 * 1024
+    return _mb_setting("DURACASH_TRIAL_STORAGE_CAP_MB", TRIAL_STORAGE_CAP_MB_DEFAULT) * 1024 * 1024
+
+
+def storage_used_bytes(company_id: str) -> int:
+    """What the company's files take on disk now (its uploads folder)."""
+    total = 0
+    try:
+        with os.scandir(UPLOADS / company_id) as it:
+            for entry in it:
+                try:
+                    if entry.is_file(follow_symlinks=False):
+                        total += entry.stat(follow_symlinks=False).st_size
+                except OSError:
+                    pass
+    except (FileNotFoundError, NotADirectoryError):
+        return 0
+    return total
+
+
+def _size_words(n: int) -> str:
+    gb = n / (1024 ** 3)
+    return f"{gb:.1f} GB" if gb >= 1 else f"{max(1, round(n / (1024 ** 2)))} MB"
+
+
+def storage_full_words(used: int, cap: int) -> str:
+    return (f"Your company's file storage is full: {_size_words(used)} of {_size_words(cap)} used. Nothing was saved. "
+            "Delete files you no longer need (Settings, Company shows what is used), or contact Duracash support for more room.")
+
+
+# Set by the server: the cap for a company, read from its state (storage_cap_bytes). The
+# default, for scripts and tests that store files without a server, is the subscribed cap.
+CAP_FOR = lambda company_id: storage_cap_bytes({"company": {"billing": {"status": "active"}}})  # noqa: E731
+
+
 def store_bytes(company_id: str, filename: str, data: bytes, actor: str) -> dict[str, Any]:
     """Check and write a file to disk; no state is touched, so it can run outside the state lock."""
     name = safe_name(filename if isinstance(filename, str) else "file")
@@ -164,6 +219,9 @@ def store_bytes(company_id: str, filename: str, data: bytes, actor: str) -> dict
         raise domain.GateError(f"{name} is empty.")
     if len(data) > MAX_FILE_BYTES:
         raise domain.GateError(f"{name} is larger than {MAX_FILE_BYTES // (1024 * 1024)} MB.")
+    cap, used = CAP_FOR(company_id), storage_used_bytes(company_id)
+    if used + len(data) > cap:
+        raise domain.GateError(storage_full_words(used, cap))
     file_id = "file-" + secrets.token_hex(8)
     folder = UPLOADS / company_id
     folder.mkdir(parents=True, exist_ok=True)

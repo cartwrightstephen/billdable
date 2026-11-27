@@ -214,6 +214,33 @@ export function companyChanges(values, company, switches) {
 // Settings, one page each (R6-03): Company, Team, My account and Billing (members see it read-only, R6-10).
 // Company is one form with one Save at the bottom (S1): its details, the address in four boxes
 // (S3) and the switches. Your data sits folded at the end.
+// File storage (H5): how much of the company's room uploaded files take, on Settings, Company.
+let storageInfo = null;   // {used_bytes, cap_bytes, ...} once /api/storage answers
+let storageAsked = 0;     // when it was last asked for: asked again a minute later, after uploads
+export function sizeWords(n) {
+  const gb = n / (1024 ** 3);
+  return gb >= 1 ? `${gb.toFixed(1)} GB` : `${Math.max(1, Math.round(n / (1024 ** 2)))} MB`;
+}
+export function storageHtml(info) {
+  if (!info) return `<p class="sub" id="storage-use">Files: checking how much room they take…</p>`;
+  const used = Number(info.used_bytes) || 0, cap = Number(info.cap_bytes) || 1;
+  const share = Math.min(100, Math.round((used / cap) * 100));
+  const full = used >= cap * 0.9;
+  return `<p class="sub" id="storage-use">Files: ${sizeWords(used)} of ${sizeWords(cap)} used (${share}%).
+      <progress class="storage-meter" max="100" value="${share}" aria-label="File storage used">${share}%</progress>
+      ${full ? `<span class="pill amber">Nearly full</span> Delete files you no longer need, or contact Duracash support for more room.` : ""}
+      Each file can be up to ${Number(info.max_file_mb) || 15} MB.</p>`;
+}
+async function loadStorage() {
+  storageAsked = Date.now();
+  try {
+    const res = await fetch("/api/storage");
+    if (!res.ok) return;
+    storageInfo = await readJson(res);
+  } catch (_) { return; }
+  patch("#storage-use-box", storageHtml(storageInfo));
+}
+
 function companyView() {
   const owner = can("company");
   const data = can("data");
@@ -224,6 +251,7 @@ function companyView() {
   const saved = (name) => unesc(co[name] || "");
   const lock = owner ? "" : "disabled";
   const box = (name, id, label, rule, extra = {}) => field({ form: "company", name, id, label, rule, value: saved(name), attrs: lock, ...extra });
+  if (Date.now() - storageAsked > 60_000) loadStorage();
   return `
     <h1>Company</h1>
     <div data-form-key="company">${formErrorLine("company")}
@@ -248,6 +276,7 @@ function companyView() {
     <details class="card danger-zone" data-more="danger"${formOpen.reset || moreDetails.danger ? " open" : ""}>
       <summary><strong>Your data</strong></summary>
       <h2>Your data</h2>
+      <div id="storage-use-box">${storageHtml(storageInfo)}</div>
       ${data ? `<p class="sub">Download everything in your company as one file on <a href="/data/export" data-action="nav" data-view="export">Export</a>, or start over.</p>
       <div class="form-inline">
         <button class="btn small secondary" id="reset" data-action="reset-data" aria-expanded="${!!formOpen.reset}">${isDemo ? "Reset the demo" : "Reset data"}</button>

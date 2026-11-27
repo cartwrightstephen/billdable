@@ -404,6 +404,31 @@ def load_company(company_id: str) -> dict:
     raise CompanyMissing(company_id)
 
 
+def storage_cap(company_id: str) -> int:
+    """The company's file storage cap (H5): more once it subscribes (importer.storage_cap_bytes)."""
+    try:
+        state = company_store().load(company_id)
+    except Exception:
+        state = None
+    return importer.storage_cap_bytes(state)
+
+
+importer.CAP_FOR = storage_cap
+
+UPLOADS_PER_HOUR_USER = 120     # files one person can upload an hour (H5)
+UPLOADS_PER_HOUR_COMPANY = 400  # and a whole company
+
+
+def uploads_per_hour() -> tuple:
+    """(per person, per company), from DURACASH_UPLOADS_PER_HOUR_USER / _COMPANY."""
+    def num(name: str, default: int) -> int:
+        try:
+            return max(1, int(os.environ.get(name) or default))
+        except ValueError:
+            return default
+    return num("DURACASH_UPLOADS_PER_HOUR_USER", UPLOADS_PER_HOUR_USER), num("DURACASH_UPLOADS_PER_HOUR_COMPANY", UPLOADS_PER_HOUR_COMPANY)
+
+
 def _write_back_migrated(company_id: str) -> None:
     """A file from older code is saved in the current shape the first time it is read (R6-08),
     so the disk never waits on the company's next change. Read again under the lock and migrated
@@ -667,9 +692,90 @@ def _gate(exc: "domain.GateError") -> dict:
     return out
 
 
+HEADER_SECONDS = 20   # the request line and headers must all arrive within this long (M8)
+_BUSY_BODY = b'{"error": "The server is busy. Try again in a few seconds."}'
+BUSY_RESPONSE = (b"HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nRetry-After: 5\r\n"
+                 b"Connection: close\r\nContent-Length: " + str(len(_BUSY_BODY)).encode() + b"\r\n\r\n" + _BUSY_BODY)
+
+
+def max_connections() -> int:
+    """How many connections are served at once (DURACASH_MAX_CONNECTIONS, default 200, M8).
+    Each one is a thread; one more is answered 503 straight away and closed."""
+    try:
+        return max(4, int(os.environ.get("DURACASH_MAX_CONNECTIONS") or 200))
+    except ValueError:
+        return 200
+
+
+class _HeaderDeadlines:
+    """One watcher thread for every connection still sending its request line and headers: one
+    that hasn't finished HEADER_SECONDS after it began is shut, so a client trickling a header a
+    byte at a time can't hold a thread for long (the socket timeout alone is per read)."""
+
+    def __init__(self) -> None:
+        self._due: dict = {}
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+
+    def arm(self, conn, seconds: float) -> None:
+        with self._lock:
+            self._due[conn] = time.monotonic() + seconds
+            if self._thread is None or not self._thread.is_alive():
+                self._thread = threading.Thread(target=self._watch, name="header-deadlines", daemon=True)
+                self._thread.start()
+
+    def disarm(self, conn) -> None:
+        with self._lock:
+            self._due.pop(conn, None)
+
+    def _watch(self) -> None:
+        import socket
+        while True:
+            time.sleep(0.25)
+            now = time.monotonic()
+            with self._lock:
+                late = [c for c, due in self._due.items() if due <= now]
+                for c in late:
+                    self._due.pop(c, None)
+            for c in late:
+                try:
+                    c.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+
+_HEADER_DEADLINES = _HeaderDeadlines()
+
+
 class Server(ThreadingHTTPServer):
     daemon_threads = True
     request_queue_size = 64
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._slots = threading.BoundedSemaphore(max_connections())
+
+    def process_request(self, request, client_address) -> None:
+        # At most max_connections() at once (M8); past that, a short 503 rather than one more thread.
+        if not self._slots.acquire(blocking=False):
+            try:
+                request.settimeout(2)
+                request.sendall(BUSY_RESPONSE)
+            except OSError:
+                pass
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -682,6 +788,18 @@ class Handler(BaseHTTPRequestHandler):
     # path with secrets removed, status, milliseconds and a request id. Never headers or cookies.
     _rid = ""
     _t0 = 0.0
+
+    def handle_one_request(self) -> None:
+        _HEADER_DEADLINES.arm(self.connection, HEADER_SECONDS)
+        try:
+            super().handle_one_request()
+        finally:
+            _HEADER_DEADLINES.disarm(self.connection)
+
+    def parse_request(self) -> bool:
+        ok = super().parse_request()   # reads the headers
+        _HEADER_DEADLINES.disarm(self.connection)
+        return ok
 
     def log_request(self, code="-", size="-") -> None:
         log_json(
@@ -1567,6 +1685,13 @@ class Handler(BaseHTTPRequestHandler):
             "file_types": sorted(e.lstrip(".") for e in importer.ALLOWED_FILES),
         })
 
+    def _g_storage(self, m, user) -> None:
+        """Settings, Company: how much of the company's file storage is used (H5)."""
+        per_user, per_company = uploads_per_hour()
+        self._json(200, {"used_bytes": importer.storage_used_bytes(user["company_id"]), "cap_bytes": storage_cap(user["company_id"]),
+                         "max_file_mb": importer.MAX_FILE_BYTES // (1024 * 1024), "uploads_per_hour_user": per_user,
+                         "uploads_per_hour_company": per_company})
+
     def _g_calendar(self, m) -> None:
         company_id = importer.company_for_token(m.group(1), "calendar")
         if not company_id:
@@ -2356,6 +2481,8 @@ class Handler(BaseHTTPRequestHandler):
         # A file on its way into the New job record form: that form's save fills in what it is.
         for_job_record = file_now and (query.get("for_job_record") or [""])[0] == "1"
         filename = unquote(self.headers.get("X-Filename", "") or "upload")
+        if self._upload_refused(user):
+            return
         data = self._read_raw(importer.MAX_FILE_BYTES)
         user = self._session_user()  # still signed in now the upload has arrived?
         if not user:
@@ -2427,6 +2554,20 @@ class Handler(BaseHTTPRequestHandler):
         if status == 200 and notes:
             payload = {**payload, "message": " ".join(notes)}
         self._json(status, {**payload, "uploaded_record_ids": made} if status == 200 and made else payload)
+
+    def _upload_refused(self, user: dict) -> bool:
+        """The hourly upload limits (H5), checked before the file is read: per person and per
+        company. Answers 429 and returns True when one is reached."""
+        per_user, per_company = uploads_per_hour()
+        if _within_limit(f"upload:user:{user['id']}", per_user, 3600) and _within_limit(f"upload:company:{user['company_id']}", per_company, 3600):
+            return False
+        try:
+            self._drain(int(self.headers.get("Content-Length", "0") or "0"))
+        except ValueError:
+            self.close_connection = True
+        self._json(429, {"error": f"That is a lot of uploads in one hour (the limit is {per_user} a person, {per_company} a company). "
+                                  "Nothing was saved; try again later."})
+        return True
 
     def _store_email_files(self, company_id: str, parsed: dict, actor: str, raw: bytes | None = None, raw_name: str = "") -> tuple:
         """Write an email's own file and its attachments to disk; refused attachment types are listed, not fatal."""
@@ -2679,17 +2820,24 @@ class Handler(BaseHTTPRequestHandler):
             self._send(303, b"", "text/plain", {"Location": "/communications"})
             return
         user = self._session_user()
-        data = self._read_raw(MAX_INBOUND_BYTES)
-        parsed = importer.parse_share(data, self.headers.get("Content-Type") or "")
         if not user:
-            key = None
-            if _within_limit(f"share-hold:{self._client_ip()}", SHARE_HOLDS_PER_HOUR, 3600):
-                key = importer.hold_share(parsed)
+            # Signed out (M8): counted, and refused, before the body is read, and held to one
+            # file's size rather than the signed-in limit.
+            if not _within_limit(f"share-hold:{self._client_ip()}", SHARE_HOLDS_PER_HOUR, 3600):
+                self.close_connection = True
+                self._send(303, b"", "text/plain", {"Location": "/communications", "Connection": "close"})
+                return
+            data = self._read_raw(importer.MAX_FILE_BYTES)
+            key = importer.hold_share(importer.parse_share(data, self.headers.get("Content-Type") or ""))
             headers = {"Location": "/communications"}
             if key:
                 headers.update(self._share_cookie(key))
             self._send(303, b"", "text/plain", headers)
             return
+        if self._upload_refused(user):
+            return
+        data = self._read_raw(MAX_INBOUND_BYTES)
+        parsed = importer.parse_share(data, self.headers.get("Content-Type") or "")
         if not read_only_reason(user["company_id"]):
             self._add_shared(user["company_id"], parsed)
         # Read-only: the Inbox page shows why; nothing is stored.
@@ -3185,6 +3333,7 @@ ROUTES = [
     Route("GET", r"/api/qbo/reconcile", "_g_qbo_reconcile", "user"),
     Route("GET", r"/api/qbo/callback", "_g_qbo_callback"),
     Route("GET", r"/api/import/settings", "_g_import_settings", "user"),
+    Route("GET", r"/api/storage", "_g_storage", "user"),
     Route("GET", r"/api/files/([^/]+)", "_g_file", "user"),
     Route("GET", r"/api/jobs/([^/]+)/payapp/([^/]+)\.pdf", "_g_payapp_pdf", "user"),
     Route("GET", r"/api/jobs/([^/]+)/waiver-form/(interim|final)\.pdf", "_g_waiver_form_pdf", "user"),

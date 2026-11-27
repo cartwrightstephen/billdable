@@ -156,6 +156,7 @@ table.sortable th:hover { color: var(--copper); }
 .filter-bar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
 .filter-bar.progress-modes { margin: 4px 0 8px; }
 .progress-preview { font-weight: 600; margin: 8px 0; }
+.storage-meter { width: 120px; height: 10px; vertical-align: middle; accent-color: var(--copper); }
 .filter-bar select { padding: 6px 10px; border-radius: 6px; border: 1px solid var(--field); font: inherit; background: var(--field-bg); min-height: 34px; }
 .inline-label { font-size: 13px; color: var(--muted); }
 /* A filter's label and its box, kept together (D5); below 600 px one per row, the box filling it. */
