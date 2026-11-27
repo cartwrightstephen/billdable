@@ -210,6 +210,28 @@ class Documents(unittest.TestCase):
         self.assertEqual(compliance.doc_status({"expires_on": "2026-11-26"}, TODAY, 30), "expired")
         self.assertEqual(compliance.doc_status({}, TODAY, 30), "no_expiry")
 
+    def test_an_undated_coi_doesnt_silence_the_renewed_one(self):   # Nov 27 hunt
+        state = company()
+        undated = compliance.add_doc(state, {"type": "coi", "issuer": "Acme Mutual"}, "Pat")
+        renewed = compliance.add_doc(state, {"type": "coi", "issuer": "Acme Mutual", "effective_on": "2026-01-01", "expires_on": "2026-12-10"}, "Pat")
+        statuses = {d["id"]: d["status"] for d in compliance.view(state, TODAY)["docs"]}
+        self.assertEqual(statuses[renewed["id"]], "expiring", "the dated one still reminds")
+        self.assertEqual(statuses[undated["id"]], "replaced", "the dated one is newer")
+        self.assertTrue(any(renewed["id"] in r["key"] for r in compliance.reminder_items(state, TODAY, {})))
+        # A later effective date is newer; an earlier one entered afterwards isn't.
+        older = compliance.add_doc(state, {"type": "coi", "issuer": "Acme Mutual", "effective_on": "2025-01-01", "expires_on": "2025-12-10"}, "Pat")
+        statuses = {d["id"]: d["status"] for d in compliance.view(state, TODAY)["docs"]}
+        self.assertEqual((statuses[renewed["id"]], statuses[older["id"]]), ("expiring", "replaced"))
+
+    def test_a_jobs_own_coi_doesnt_meet_a_client_wide_requirement(self):   # Nov 27 hunt
+        state = company()
+        j = state["jobs"][0]
+        compliance.add_requirement(state, {"type": "coi", "payer_id": "p1"}, "Pat")
+        compliance.add_doc(state, {"type": "coi", "payer_id": "p1", "job_id": j["id"], "expires_on": "2027-11-01"}, "Pat")
+        self.assertEqual(compliance.view(state, TODAY)["requirements"][0]["status"], "missing")
+        compliance.add_requirement(state, {"type": "coi", "payer_id": "p1", "job_id": j["id"]}, "Pat")
+        self.assertEqual([r["status"] for r in compliance.view(state, TODAY)["requirements"]], ["missing", "met"])
+
     def test_requirements_and_the_soft_gate(self):
         state = company()
         compliance.add_requirement(state, {"type": "coi", "payer_id": "p1", "additional_insured": True}, "Pat")

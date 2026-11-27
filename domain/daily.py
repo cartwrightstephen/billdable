@@ -24,7 +24,7 @@ from typing import Any
 
 __all__ = [
     "WEATHER", "DAILY_SECTIONS", "INSPECTION_TYPES", "CREW_MAX", "RECORD_SECTIONS", "add_daily_record", "clean_daily_details",
-    "clean_record_entries", "daily_record_note", "daily_record_for", "hold_for_job_record", "save_job_record", "update_job_record",
+    "clean_record_entries", "daily_record_note", "daily_record_for", "hold_for_job_record", "record_day", "save_job_record", "update_job_record",
 ]
 
 _HOLD_HOURS = 24   # how long an uploaded file waits for its New job record
@@ -113,13 +113,16 @@ def _amount(value: Any, field: str, label: str) -> int:
 
 
 def clean_daily_details(state: dict[str, Any], job: dict[str, Any], body: dict[str, Any],
-                        credit: dict[str, int] | None = None, gate_over: bool = False) -> dict[str, Any]:
+                        credit: dict[str, int] | None = None, gate_over: bool = False,
+                        own: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     """The daily record's fields beyond the Diary, checked: crew, weather, materials, deliveries,
     the ticked sections and the files already on the job record. Raises GateError under the field.
     A quantity more than what is left on its line is a soft gate (Nov 26: 2 sinks on a 1-each line
     went through): refused with over_schedule saying which, unless body["over_ok"] says to record
     it anyway; gate_over is the form's save (an import or a script records what it is given).
-    credit: what this record already added to each line, on Edit (it is left again)."""
+    credit: what this record already added to each line, on Edit (it is left again). own: the
+    record's own quantity rows by line, on Edit: a lump sum's % done to date typed as it was saved
+    is that row again, not a new step up (Nov 27 hunt: saving an Edit wiped the % it had recorded)."""
     from domain import GateError, _refuse, parse_int
     import sov
     out: dict[str, Any] = {}
@@ -174,7 +177,15 @@ def clean_daily_details(state: dict[str, Any], job: dict[str, Any], body: dict[s
             if to_date:
                 # New job record asks a lump sum's % done to date, the figure a foreman knows (Round 1):
                 # what is recorded is the step up from the field total. Lower is a correction, not a record.
+                prev = (own or {}).get(line["id"])
+                if prev is not None and prev.get("to_date_milli") == amount:
+                    rows.append(dict(prev))   # Edit: the % this record set, unchanged
+                    continue
                 current = _field_floor(job, line)
+                if prev is not None and prev.get("to_date_milli") == current:
+                    # Edit of the record that set the line where it is now: its own step up comes off
+                    # first, so it can be changed either way. A later record's % stays the floor.
+                    current = max(0, current - int((credit or {}).get(line["id"], 0)))
                 if amount < current:
                     _refuse("", {field: f"{line['description']} is at {sov.fmt_qty(current * 100)}% done already. Enter that or more, "
                                         "or lower it with Correct field total on the job's Schedule of values card."})
@@ -331,6 +342,8 @@ def add_daily_record(state: dict[str, Any], job_id: str, notes: str, actor: str 
         "job_id": job_id,
         "notes": notes,
         "at": when,
+        # The day it is for, where the person is: in a US evening `at` (UTC) is already tomorrow.
+        "day": day,
         "actor": actor,
         "for_history": bool(job.get("closed")),
         **extra,
@@ -346,6 +359,7 @@ def add_daily_record(state: dict[str, Any], job_id: str, notes: str, actor: str 
         label += f": {_qty_words(job, quantities)}"[:160]
     add_job_record(state, job_id, label[:200], "daily", daily_record_note(job, rec), actor)
     job["records"][-1]["daily_record_id"] = rec["id"]   # Edit opens this record's form again (Nov 26)
+    job["records"][-1]["on_date"] = day
     for record in job.get("records", []):
         if record["id"] in rec.get("attachments", []):
             record["daily_record_id"] = rec["id"]
@@ -628,6 +642,12 @@ def save_job_record(state: dict[str, Any], job_id: str, notes: str, actor: str, 
     return job
 
 
+def record_day(rec: dict[str, Any]) -> str:
+    """The day a daily record is for, YYYY-MM-DD: the person's own day it was saved for, or for one
+    saved before that was kept, the day of its time (UTC, so a US evening reads as tomorrow)."""
+    return str(rec.get("day") or rec.get("at") or "")[:10]
+
+
 def _added_rows(rec: dict[str, Any]) -> list[dict[str, Any]]:
     """What a daily record put on the field totals: quantities_added, or for a record from before it,
     all of its quantities or none (as _quantities_from_records reads them)."""
@@ -714,7 +734,8 @@ def update_job_record(state: dict[str, Any], job_id: str, daily_id: str, notes: 
     for entry in entries:
         if entry["record_id"] and entry["record_id"] not in linked:
             raise GateError("Part of this job record was changed or taken off since you opened it. Open it again.")
-    day = _record_day({**body, "today": body.get("today")}) if body.get("date") else str(rec.get("at") or "")[:10]
+    was = record_day(rec)
+    day = _record_day({**body, "today": body.get("today")}) if body.get("date") else was
     shown = _daily_job_record(job, rec)
     old_rows = _added_rows(rec)
     details = {k: v for k, v in body.items() if k != "entries"}
@@ -722,9 +743,9 @@ def update_job_record(state: dict[str, Any], job_id: str, daily_id: str, notes: 
     credit: dict[str, int] = {}
     for row in old_rows:
         credit[row["line_id"]] = credit.get(row["line_id"], 0) + int(row["qty_milli"])
-    extra = clean_daily_details(state, job, details, credit=credit, gate_over=True)
-    new_q = (extra.get("sections") or {}).get("quantities") or []
     before_q = (rec.get("sections") or {}).get("quantities") or []
+    extra = clean_daily_details(state, job, details, credit=credit, gate_over=True, own={r["line_id"]: r for r in before_q})
+    new_q = (extra.get("sections") or {}).get("quantities") or []
     if not _same_quantities(before_q, new_q):
         sent = [inv for inv in sov.live_invoices(job) if inv.get("status") not in DRAFT_STATUSES and str(inv.get("created_at") or "") >= str(rec.get("at") or "")]
         if old_rows and sent:
@@ -748,8 +769,9 @@ def update_job_record(state: dict[str, Any], job_id: str, daily_id: str, notes: 
     for k in ("crew_count",):
         rec.pop(k, None)
     rec.update({k: v for k, v in extra.items() if k != "attachments"})
-    if day != str(rec.get("at") or "")[:10]:
+    if day != was:
         rec["at"] = f"{day}T12:00:00+00:00"
+    rec["day"] = day
     kept: set[str] = set()
     for entry in entries:
         if entry["record_id"]:
@@ -775,6 +797,7 @@ def update_job_record(state: dict[str, Any], job_id: str, daily_id: str, notes: 
     if shown is not None:
         shown["label"], shown["note"], shown["daily_record_id"] = label[:200], daily_record_note(job, rec), daily_id
         shown["edited"] = {"by": actor, "at": utcnow()}
+        shown["on_date"] = day
     audit(state, job_id, "daily_record_edit", f"{actor} changed the job record of {day}" + (f", taking off {', '.join(r['label'] for r in gone)}" if gone else "") + ".", actor)
     if not job.get("closed"):
         _refresh_draft_gate(job, state)

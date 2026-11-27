@@ -50,6 +50,12 @@ class FirstPayAppTests(unittest.TestCase):
         self.job["started_on"] = "2026-10-20"
         self.assertEqual(domain.next_payapp_due(self.state, self.job, today=date(2026, 11, 2)), date(2026, 11, 13), "Nov 15, 2026 is a Sunday")
 
+    def test_a_weekend_cutoff_moved_back_is_still_never_before_the_start(self):   # Nov 27 hunt
+        self.job["started_on"] = "2026-11-14"   # a Saturday; the 15th is the Sunday, kept the Friday the 13th
+        self.assertEqual(domain.next_payapp_due(self.state, self.job, today=date(2026, 11, 10)), date(2026, 12, 15))
+        dates = domain.job_key_dates(self.state, self.job, today=date(2026, 11, 10))
+        self.assertFalse(any(d["date"] < "2026-11-14" for d in dates if d["key"].startswith("cutoff") or d["key"] == "first_payapp"), dates)
+
     def test_no_cutoff_no_due_date(self):
         self.payer.pop("payapp_due_day")
         self.assertIsNone(domain.next_payapp_due(self.state, self.job, today=date(2026, 11, 26)))
@@ -65,8 +71,10 @@ class PayPeriodTests(unittest.TestCase):
     def test_the_period_comes_from_the_contract(self):
         domain.edit_job(self.state, self.job["id"], {"period_end_day": "15"}, "Owner")
         self.assertEqual(self.job["period_end_day"], 15)
-        p = domain.pay_period(self.state, self.job, today=date(2026, 11, 27))
+        p = domain.pay_period(self.state, self.job, today=date(2026, 10, 27))
         self.assertEqual((p["from"], p["to"]), ("2026-10-01", "2026-10-15"), "the first period after the start, still not billed")
+        p = domain.pay_period(self.state, self.job, today=date(2026, 11, 27))
+        self.assertEqual((p["from"], p["to"]), ("2026-10-01", "2026-11-15"), "a missed cycle: up to the last period end gone by")
         for inv in self.job["invoices"]:
             inv["status"] = "void"
         self.job["invoices"].append({"id": "x", "status": "sent", "period_to": "2026-11-15", "lines": []})
@@ -88,9 +96,20 @@ class PayPeriodTests(unittest.TestCase):
                                 details={"sections": {"quantities": [{"line_id": self.rough["id"], "qty": "10"}]}})
         domain.add_daily_record(self.state, self.job["id"], "After it", at="2026-11-20T12:00:00+00:00",
                                 details={"sections": {"quantities": [{"line_id": self.rough["id"], "qty": "4"}]}})
-        view = domain.job_view(self.state, self.job)
+        view = domain.job_view(self.state, self.job, today=date(2026, 11, 27))
         self.assertEqual((view["pay_period"]["from"], view["pay_period"]["to"]), ("2026-10-16", "2026-11-15"))
         self.assertEqual(view["pay_period"]["after_milli"], {self.rough["id"]: 4000})
+
+    def test_a_missed_cycle_bills_every_record_up_to_the_last_period_end(self):   # Nov 27
+        self.job["period_end_day"] = 15
+        for day, qty in (("2026-10-10", "3"), ("2026-11-10", "10"), ("2026-11-20", "4")):
+            domain.add_daily_record(self.state, self.job["id"], day, at=f"{day}T12:00:00+00:00",
+                                    details={"sections": {"quantities": [{"line_id": self.rough["id"], "qty": qty}]}})
+        view = domain.job_view(self.state, self.job, today=date(2026, 11, 27))
+        self.assertEqual((view["pay_period"]["from"], view["pay_period"]["to"]), ("2026-10-01", "2026-11-15"))
+        self.assertEqual(view["pay_period"]["after_milli"], {self.rough["id"]: 4000}, "only what came after Nov 15 waits")
+        p = domain.pay_period(self.state, self.job, today=date(2027, 1, 3))
+        self.assertEqual(p["to"], "2026-12-15", "into the next year")
 
     def test_a_new_job_takes_the_setting(self):
         job = new_job(self.state, name="Bath", period_end_day="15")
@@ -197,6 +216,23 @@ class ReminderRowTests(unittest.TestCase):
         self.assertIn("The pay app is due Nov 27, 2026", soon["text"])
         domain.add_daily_record(self.state, self.id, "Outlets", details={"sections": {"co_work": [{"co_id": "co-1", "description": "Two circuits"}]}})
         self.assertEqual(self.rows("co_no_work", date(2026, 11, 26)), [])
+
+    def test_the_dashboard_follows_the_viewers_own_day(self):   # Nov 27
+        domain.add_daily_record(self.state, self.id, "Tuesday", at="2026-11-24T12:00:00+00:00")
+        # Tuesday 8 pm in Atlanta is Wednesday 01:00 UTC: Tuesday's record is there; Monday isn't asked about.
+        now = datetime(2026, 11, 25, 1, 0, tzinfo=timezone.utc)
+        self.assertEqual([r for r in domain.light_snapshot(self.state, now, today="2026-11-24")["today_rows"] if r["kind"] == "no_record"][0]["item_id"],
+                         "2026-11-23", "the local day: yesterday is Monday")
+        self.assertEqual([r for r in domain.light_snapshot(self.state, now)["today_rows"] if r["kind"] == "no_record"], [],
+                         "by UTC it is Wednesday, and Tuesday had one")
+
+    def test_the_server_reads_the_pages_day(self):
+        import types
+        import server
+        day = lambda value: server.Handler._page_day(types.SimpleNamespace(headers={"X-Duracash-Today": value}))
+        self.assertEqual(day("2026-11-24"), "2026-11-24")
+        self.assertEqual(day("tomorrow"), "")
+        self.assertEqual(day(""), "")
 
     def test_only_reminders_are_dismissed(self):
         with self.assertRaises(domain.GateError):

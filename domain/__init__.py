@@ -331,6 +331,7 @@ GATES = {"hard": "Required (hard stop)", "soft": "Check (soft)"}
 SOFT_BY_DEFAULT = {"photo", "ticket", "time_sheet", "stored"}
 SOFT_ANSWERS = {"checked": "checked", "not_needed": "not needed this time"}
 OVERRIDE_PERM = "Only someone who can send pay apps can let a required document go without it."
+GATE_PERM = "Only someone who can send pay apps can make a required document a check."
 
 
 def gate_key(item: dict[str, Any]) -> str:
@@ -2838,8 +2839,9 @@ def without_link_secrets(state: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def job_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
-    """One job as the app shows it: the stored job plus money, blockers and labels."""
+def job_view(state: dict[str, Any], job: dict[str, Any], today: date | None = None) -> dict[str, Any]:
+    """One job as the app shows it: the stored job plus money, blockers and labels. today: the
+    viewer's own day (light_snapshot's), for the pay period and the next due date; else UTC's."""
     out = hide_link_secrets(deepcopy(job))
     out["money"] = job_money(job)
     out["blocker_items"] = blocker_items(job)
@@ -2855,15 +2857,15 @@ def job_view(state: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     # put on each line after it ends (the progress form leaves that for the next one), and the next
     # pay app's due date (never before the start, on a business day).
     if not job.get("closed"):
-        period = pay_period(state, job)
+        period = pay_period(state, job, today=today)
         after: dict[str, int] = {}
         ids = set(job.get("daily_records") or [])
         for rec in state.get("daily_records", []) if ids else []:
-            if rec.get("id") in ids and str(rec.get("at") or "")[:10] > period["to"]:
+            if rec.get("id") in ids and record_day(rec) > period["to"]:
                 for row in rec.get("quantities_added", [] if rec.get("quantities_not_applied") else (rec.get("sections") or {}).get("quantities") or []):
                     after[row["line_id"]] = after.get(row["line_id"], 0) + int(row["qty_milli"])
         out["pay_period"] = {**period, "after_milli": after}
-        due = next_payapp_due(state, job)
+        due = next_payapp_due(state, job, today=today)
         out["payapp_due_on"] = due.isoformat() if due else ""
     # Edit on a diary entry opens its New job record form again (Nov 26): which daily record it reads.
     for rec in out.get("records") or []:
@@ -3205,9 +3207,13 @@ def email_moot(job: dict[str, Any], e: dict[str, Any]) -> str:
     return ""
 
 
-def light_snapshot(state: dict[str, Any], now: datetime | None = None, perms: list[str] | None = None) -> dict[str, Any]:
+def light_snapshot(state: dict[str, Any], now: datetime | None = None, perms: list[str] | None = None,
+                   today: Any = "") -> dict[str, Any]:
     """What /api/state sends: bounded by the open work, not by the company's whole history.
-    perms: the signed-in person's permissions; a To Do row for one they don't hold is left out."""
+    perms: the signed-in person's permissions; a To Do row for one they don't hold is left out.
+    today: the day the page says it is where the person is (local_today: within a day of UTC's),
+    so the To Do rows and dates match their day (Nov 27: "No job record yesterday" went by UTC)."""
+    day = date.fromisoformat(local_today(today, now)) if today else None
     since = ((now or datetime.now(timezone.utc)) - timedelta(days=RECENT_CLOSED_DAYS)).isoformat()
     heavy = {"jobs", "audit", "email_log", "inbox", "gc_forms"}   # gc_forms: the client card asks for its own (gcforms.py)
     out = {k: deepcopy(v) for k, v in state.items() if k not in heavy}
@@ -3222,7 +3228,7 @@ def light_snapshot(state: dict[str, Any], now: datetime | None = None, perms: li
             if _closed_recently(job, since):
                 jobs.append(job_summary(state, job))
             continue
-        view = job_view(state, job)
+        view = job_view(state, job, today=day)
         view.pop("payer")  # the app joins payers by payer_id
         jobs.append(view)
         full.append(view)
@@ -3250,7 +3256,7 @@ def light_snapshot(state: dict[str, Any], now: datetime | None = None, perms: li
         if payer["id"] in pay_stats:
             payer["pay_stats"] = pay_stats[payer["id"]]
         payer_extras(state, payer)   # its client type and paperwork items (S11)
-        due = payapp_due(payer, (now or datetime.now(timezone.utc)).date())
+        due = payapp_due(payer, day or (now or datetime.now(timezone.utc)).date())
         if due:
             payer["payapp_due_next"], payer["payapp_due_prev"] = due[0].isoformat(), due[1].isoformat()
     emails = state.get("email_log", [])
@@ -3266,7 +3272,7 @@ def light_snapshot(state: dict[str, Any], now: datetime | None = None, perms: li
     out["pending_email_failures"] = len(failures)
     out["audit_total"] = len(state.get("audit", []))
     # Today's queue, drawn from the same rows as the daily email (R4-10).
-    out["today_rows"] = rows_with_perms(today_rows(state, now), perms)
+    out["today_rows"] = rows_with_perms(today_rows(state, now, today=day), perms)
     # The To Do list's own tasks (G5): open ones, and those done in the last 30 days.
     out["tasks"] = visible_tasks(state, now)
     out["task_assignments"] = deepcopy(state.get("task_assignments") or {})
@@ -3347,7 +3353,7 @@ def _pay_app_list(invoices: list[dict[str, Any]]) -> str:
     return f"{', '.join(n[:-1])} and {n[-1]}" if len(n) > 1 else (n[0] if n else "the pay app")
 
 
-def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[str, Any]]:
+def today_rows(state: dict[str, Any], now: datetime | None = None, today: date | None = None) -> list[dict[str, Any]]:
     """What needs a person today, most urgent first (R4-10): the one rule set for Today's queue
     (light_snapshot sends it; static/js/today.js draws it) and the daily email.
     Each row: {rank, kind, job_id, job, payer, label, tone, text, note, button, path, invoice_id,
@@ -3362,7 +3368,7 @@ def today_rows(state: dict[str, Any], now: datetime | None = None) -> list[dict[
     else today), ball_in_court ("us" or "client") and assignee_id/assignee_name
     (domain/tasks.py decorate_rows)."""
     now = now or datetime.now(timezone.utc)
-    today = now.date()
+    today = today or now.date()   # the viewer's own day when the page sent it (light_snapshot)
     jobs = {j["id"]: j for j in state.get("jobs", []) if not j.get("closed")}
     payers = {p["id"]: p for p in state.get("payers", [])}
     style = billing_style(state)
@@ -3547,7 +3553,7 @@ def record_missed_on(state: dict[str, Any], job: dict[str, Any], today: date) ->
     if not start or start > day.isoformat():
         return ""
     ids = set(job.get("daily_records") or [])
-    days = {str(r.get("at") or "")[:10] for r in state.get("daily_records", []) if r.get("id") in ids}
+    days = {record_day(r) for r in state.get("daily_records", []) if r.get("id") in ids}
     days |= {str(r.get("on_date") or r.get("added_at") or "")[:10] for r in job.get("records", [])}
     if not ids and not job.get("records"):
         return ""
@@ -5344,12 +5350,19 @@ def _gate_rows(job: dict[str, Any], labels: list[str]) -> list[dict[str, str]]:
     return rows
 
 
-def set_job_paperwork(state: dict[str, Any], job_id: str, body: dict[str, Any], actor: str = "owner") -> dict[str, Any]:
+def set_job_paperwork(state: dict[str, Any], job_id: str, body: dict[str, Any], actor: str = "owner",
+                      may_override: bool = True) -> dict[str, Any]:
     """Change the paperwork this job needs: {packet: the list, no_paperwork: true for nothing, or
     use_client: true for the client's list again}. It applies from the next pay app and to a draft
-    that hasn't been sent; a sent pay app stays as it went (B9). Audited."""
+    that hasn't been sent; a sent pay app stays as it went (B9). Audited. may_override: whether this
+    person can let a hard stop go (send pay apps); without it a Required document can't be made a
+    Check, which would let the pay app go without it (Nov 27 hunt)."""
     job = _open_job(state, job_id)
     if "gates" in body:
+        if not may_override and isinstance(body.get("gates"), dict):
+            now = job.get("paperwork_gates") or {}
+            if any(v == "soft" and (now.get(k) or default_gate(k)) == "hard" for k, v in body["gates"].items() if isinstance(k, str)):
+                raise GateError(GATE_PERM, fields={"gates": GATE_PERM})
         _set_paperwork_gates(state, job, body.get("gates"), actor)
         if not any(k in body for k in ("packet", "no_paperwork", "use_client")):
             _refresh_draft_gate(job, state)

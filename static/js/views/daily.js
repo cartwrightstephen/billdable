@@ -512,7 +512,7 @@ export function editPrefill(j, dr) {
   const raw = (x) => unesc(x == null ? "" : String(x));
   d.notes = raw(dr.notes);
   for (const k of ["weather", "weather_note", "materials", "deliveries"]) if (dr[k]) d[k] = raw(dr[k]);
-  const day = raw(dr.at).slice(0, 10);
+  const day = raw(dr.day || dr.at).slice(0, 10);   // the day it is for (domain.record_day), not the UTC day of its time
   d.date = day;
   const lines = Object.fromEntries((((j.sov_view || {}).lines) || []).map(l => [unesc(l.id), l]));
   const sec = dr.sections || {};

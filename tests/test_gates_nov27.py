@@ -104,6 +104,19 @@ class GateTests(unittest.TestCase):
         domain.resolve_packet_item(self.state, self.id, contract["id"], "Owner", reason="Signed at the kitchen table")
         self.assertEqual(contract["override"]["reason"], "Signed at the kitchen table")
 
+    def test_only_who_can_override_a_hard_stop_can_make_it_a_check(self):   # Nov 27 hunt
+        # Made a check, the contract would go with "not needed this time", the override without the permission.
+        with self.assertRaises(domain.GateError) as ctx:
+            domain.set_job_paperwork(self.state, self.id, {"gates": {"contract": "soft"}}, "Sam", may_override=False)
+        self.assertIn("can send pay apps", str(ctx.exception))
+        self.assertEqual(domain.item_gate(self.job, item(self.job, "contract")), "hard")
+        domain.set_job_paperwork(self.state, self.id, {"gates": {"photo": "hard", "contract": "hard"}}, "Sam", may_override=False)
+        self.assertEqual(domain.item_gate(self.job, item(self.job, "photo")), "hard", "tightening is anyone's")
+        with self.assertRaises(domain.GateError):
+            domain.set_job_paperwork(self.state, self.id, {"gates": {"photo": "soft"}}, "Sam", may_override=False)
+        domain.set_job_paperwork(self.state, self.id, {"gates": {"contract": "soft"}}, "Owner")
+        self.assertEqual(domain.item_gate(self.job, item(self.job, "contract")), "soft")
+
     def test_time_sheets_and_tickets_are_suggested_to_their_own_items(self):
         for label, ticket_type in (("sheet.pdf", "time_sheet"), ("ticket.pdf", "delivery")):
             domain.add_job_record(self.state, self.id, label, "ticket", "", "Ana")
