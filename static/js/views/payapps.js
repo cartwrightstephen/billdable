@@ -19,6 +19,7 @@ import { sendConfirmText } from "../payapp-text.js";
 
 export { sendConfirmText, deleteDraftText } from "../payapp-text.js";
 import { paymentsListHtml } from "./payments.js";
+import { docusignButton } from "./docusign.js";
 
 let payappFilter = "all";
 let payPreselectJob = null;
@@ -141,7 +142,8 @@ export function approvalHtml(inv, meId = (me || {}).id, mayApprove = may("payapp
         ${field({ form: key, name: "signature", id: `${key}-signature`, label: "Your full name", autocomplete: "name", required: true })}
         ${field({ form: key, name: "title", id: `${key}-title`, label: "Title", autocomplete: "organization-title" })}
       </div>
-      <button class="btn small" data-action="payapp-approve" data-id="${inv.job_id || ""}" data-inv="${inv.id || ""}" data-stamp="${a.stamp || ""}">Sign ${inv.number}</button>
+      <div class="form-inline"><button class="btn small" data-action="payapp-approve" data-id="${inv.job_id || ""}" data-inv="${inv.id || ""}" data-stamp="${a.stamp || ""}">Sign ${inv.number}</button>
+      ${docusignButton(`data-kind="payapp" data-id="${inv.job_id || ""}" data-inv="${inv.id || ""}" data-stamp="${a.stamp || ""}"`)}</div>
     </div>` : ""}
   </div>`;
 }

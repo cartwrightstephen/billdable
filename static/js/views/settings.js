@@ -12,6 +12,7 @@ import { state, me, currentView, formOpen, setMe, clearSession, onSessionEnd, se
 import { DEMO_COMPANY_ID, post, render, toast, patch, moreDetails, emptyState, listPage, renderLanding, backButton, nav, can } from "../app-core.js";
 import { THEMES, ACCENTS, applyAppearance, normalizeAppearance, storedAppearance } from "../theme.js";
 import { qboCardHtml } from "./payments.js";
+import { docusignCardHtml } from "./docusign.js";
 import { approverBoxes, approverIds, forgetApprovers, approverNames } from "../approvers.js";
 import { forgetImportSettings } from "./inbox.js";
 import { notificationsCardHtml, saveReminderPrefs } from "./automations.js";
@@ -245,6 +246,7 @@ function companyView() {
     </div>
     ${approversCardHtml(owner)}
     ${qboCardHtml(false)}
+    ${docusignCardHtml()}
     <details class="card danger-zone" data-more="danger"${formOpen.reset || moreDetails.danger ? " open" : ""}>
       <summary><strong>Your data</strong></summary>
       <h2>Your data</h2>

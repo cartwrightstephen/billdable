@@ -6,6 +6,7 @@ import { field, moneyField, formErrorLine, refuseForm, formValues, clearForm } f
 import { termText } from "../terms.js";
 import { state, formOpen, onSessionEnd } from "../state.js";
 import { post, render, toggleForm, may } from "../app-core.js";
+import { docusignButton } from "./docusign.js";
 
 
 // The change order just made from the job page's New change order card, shown there with
@@ -54,6 +55,7 @@ export function coSignControls(j, co, extra = "", opts = {}) {
   const newestCo = filed || records.filter(r => r.kind === "change_order").pop();
   return `${flag}<div class="form-inline">
       <button class="btn small" data-action="request-co-signature" data-id="${j.id}" data-co="${co.id}">${co.signing_page ? "Send the signing link again" : "Request signature"}</button>
+      ${docusignButton(`data-kind="co" data-id="${j.id}" data-co="${co.id}"`)}
       ${may("approve-co") ? `<button class="btn small secondary" data-action="toggle-form" data-form="${key}" aria-expanded="${!!formOpen[key]}">Signed on paper…</button>` : ""}
       ${may("withdraw-co") ? `<button class="btn small secondary" data-action="withdraw-co" data-id="${j.id}" data-co="${co.id}">Withdraw</button>` : ""}
       ${extra}

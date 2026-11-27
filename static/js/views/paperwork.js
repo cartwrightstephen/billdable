@@ -9,6 +9,7 @@ import { askConfirm } from "../dom.js";
 import { termText } from "../terms.js";
 import { state, me, currentJobId, currentDetailId, formOpen, onSessionEnd } from "../state.js";
 import { may, can, perms, render, toast, post, load, backButton, emptyState, nav } from "../app-core.js";
+import { docusignWaiver } from "./docusign.js";
 
 const DRAFT = ["draft", "awaiting_approval"];
 const IMAGE = /\.(jpe?g|png|gif|webp)$/i;
@@ -116,7 +117,7 @@ export function filledFormLink(j, kind, forId, st, entry) {
   const lastMoney = unesc(forId || "") === "retainage" && Array.isArray(j.retainage_final_holds) && !j.retainage_final_holds.length;
   if (final && (j.final_waiver_holds || []).length && !lastMoney) return "";
   const q = forId ? `?for=${encodeURIComponent(unesc(forId))}` : "";
-  return `<p><a class="btn small secondary" href="/api/jobs/${j.id}/waiver-form/${final ? "final" : "interim"}.pdf${q}" target="_blank" rel="noopener" data-filled-form>Fill in the ${entry.name} form</a></p>`;
+  return `<p><a class="btn small secondary" href="/api/jobs/${j.id}/waiver-form/${final ? "final" : "interim"}.pdf${q}" target="_blank" rel="noopener" data-filled-form>Fill in the ${entry.name} form</a>${docusignWaiver(j, kind, forId, final)}</p>`;
 }
 
 // The state form for a job (M22): the job's state from its address, or one picked here. Where the
