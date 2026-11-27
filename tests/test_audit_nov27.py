@@ -5,6 +5,7 @@ change order; and making a hard stop a check takes the permission an override ta
 import sys
 import unittest
 from datetime import date
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -13,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import domain
 from test_money import new_job, new_state
 from test_accounts import ServerCase
-from test_team import JOB, TeamHttpTests
+import test_team  # a module, so its tests aren't run again here
 
 
 class FirstDueAfterStartTests(unittest.TestCase):
@@ -72,17 +73,70 @@ class GateChangeTakesThePermissionTests(unittest.TestCase):
         domain.set_job_paperwork(self.state, self.job["id"], {"gates": {"photo": "soft", "contract": "soft"}}, "Owner", may_override=True)
         self.assertEqual(self.job["paperwork_gates"], {"contract": "soft"})
 
+    def test_taking_a_hard_stop_off_the_list_needs_the_send_permission(self):
+        with self.assertRaises(domain.GateError) as ctx:
+            domain.set_job_paperwork(self.state, self.job["id"], {"packet": "Conditional waiver, progress photos."}, "Sam", may_override=False)
+        self.assertEqual(str(ctx.exception), domain.OVERRIDE_PERM)
+        self.assertNotIn("paperwork_labels", self.job, "nothing changed")
+        with self.assertRaises(domain.GateError):
+            domain.set_job_paperwork(self.state, self.job["id"], {"no_paperwork": True}, "Sam", may_override=False)
+        # Adding, or taking off a check, needs none.
+        domain.set_job_paperwork(self.state, self.job["id"], {"packet": "Signed contract, conditional waiver, insurance certificate."}, "Sam", may_override=False)
+        self.assertIn("Insurance certificate", self.job["paperwork_labels"])
+        # Back to the client's list would drop the insurance certificate (a hard stop): refused too.
+        with self.assertRaises(domain.GateError):
+            domain.set_job_paperwork(self.state, self.job["id"], {"use_client": True}, "Sam", may_override=False)
+        domain.set_job_paperwork(self.state, self.job["id"], {"packet": "Conditional waiver, progress photos."}, "Owner", may_override=True)
+        self.assertNotIn("Signed contract", self.job["paperwork_labels"])
+
+
+class TicketItemsSplitTests(unittest.TestCase):
+    """Item 16: the item added for change-order or unit-price work is two, daily tickets and time
+    sheets, each with the gates' defaults (checks) and the change-order hard stop."""
+    def run_rule(self, covers, packet=None, payer=None):
+        inv = {"id": "inv-abc123", "packet": list(packet or [])}
+        with mock.patch.object(domain, "_work_billed_by_ticket", return_value=covers):
+            added = domain._add_ticket_item({"id": "j1", "paperwork_gates": {}}, inv, payer)
+        return added, inv["packet"]
+
+    def test_two_items_checks_for_unit_price_work(self):
+        added, packet = self.run_rule(["Pavers"])
+        self.assertTrue(added)
+        self.assertEqual([(p["kind"], p["label"]) for p in packet], [("ticket", "Daily tickets"), ("time_sheet", "Time sheets")])
+        self.assertEqual({domain.item_gate({}, p) for p in packet}, {"soft"})
+        self.assertEqual({tuple(p["covers"]) for p in packet}, {("Pavers",)})
+        self.assertEqual(len({p["id"] for p in packet}), 2)
+
+    def test_both_hard_stops_for_change_order_work(self):
+        _, packet = self.run_rule(["Pavers", "CO 1"])
+        self.assertEqual([domain.item_gate({}, p) for p in packet], ["hard", "hard"])
+
+    def test_one_the_list_has_takes_the_work_and_the_other_is_added(self):
+        tickets = {"id": "pkt-1", "kind": "ticket", "label": "Daily tickets", "required": True, "present": False, "attachments": []}
+        added, packet = self.run_rule(["CO 2"], [tickets])
+        self.assertEqual([p["label"] for p in packet], ["Daily tickets", "Time sheets"])
+        self.assertEqual(tickets["gate_fixed"], "hard")
+        combined = {"id": "pkt-2", "kind": "ticket", "label": "Daily tickets and time sheets", "required": True, "present": False, "attachments": []}
+        added, packet = self.run_rule(["CO 2"], [combined])
+        self.assertFalse(added)
+        self.assertEqual([p["label"] for p in packet], ["Daily tickets and time sheets"], "an older combined item covers both")
+
+    def test_a_client_that_doesnt_want_them_gets_both_as_not_needed(self):
+        added, packet = self.run_rule(["Pavers"], payer={"tickets_not_needed": {"reason": "Lump sum"}})
+        self.assertFalse(added)
+        self.assertEqual([(p["required"], p["skipped_reason"]) for p in packet], [(False, "Lump sum"), (False, "Lump sum")])
+
 
 class GateChangeHttpTests(ServerCase):
     """The server passes the send permission through to the gate change."""
-    join = TeamHttpTests.join
+    join = test_team.TeamHttpTests.join
 
     def test_a_profile_without_send_cant_make_the_contract_a_check(self):
         owner, _ = self.signup("owner@gates.example", "Gates Co")
         res, out = self.request("POST", "/api/team/profiles", {"name": "Job runner", "perms": ["manage_jobs"]}, cookie=owner)
         self.assertEqual(res.status, 200, out)
         cookie, _ = self.join(owner, "jo@gates.example", out["profile"]["id"])
-        _, state = self.request("POST", "/api/jobs", JOB, cookie=owner)
+        _, state = self.request("POST", "/api/jobs", test_team.JOB, cookie=owner)
         job_id = state["jobs"][0]["id"]
         res, out = self.request("POST", f"/api/jobs/{job_id}/paperwork", {"gates": {"contract": "soft"}}, cookie=cookie)
         self.assertEqual(res.status, 409, out)

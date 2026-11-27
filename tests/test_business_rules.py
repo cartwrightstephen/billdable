@@ -276,8 +276,9 @@ class FirstPayAppPaperworkTests(unittest.TestCase):
         # What Duracash makes is in; the conditional waiver (M16) is what it waits on. For a unit-price
         # line the daily tickets (M6) are a check asked at send (Nov 26), a hard stop only for change orders.
         self.assertEqual(domain.blocker_lines(job), ["Conditional waiver on progress payment is missing."])
-        self.assertEqual([p["label"] for p in domain.soft_checks_waiting(job, draft)], ["Daily tickets and time sheets"])
-        made = [p for p in draft["packet"] if p["kind"] not in ("waiver", "ticket")]
+        # Two items since the Nov 27 audit, as the client's lists split them.
+        self.assertEqual([p["label"] for p in domain.soft_checks_waiting(job, draft)], ["Daily tickets", "Time sheets"])
+        made = [p for p in draft["packet"] if p["kind"] not in ("waiver", "ticket", "time_sheet")]
         self.assertEqual({p["present_reason"] for p in made}, {"Produced by Duracash"})
         self.assertEqual(next(p for p in draft["packet"] if p["kind"] == "ticket")["covers"], ["Pavers"])
 

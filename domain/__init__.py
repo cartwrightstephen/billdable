@@ -5323,6 +5323,18 @@ def set_job_paperwork(state: dict[str, Any], job_id: str, body: dict[str, Any], 
     if job.get("packet"):
         raise GateError("This job's supporting documents were set up on an older pay app, so it can't have its own list.")
     before = _job_paperwork_view(state, job)
+    if not may_override:
+        # Taking a hard stop off the list lets a pay app go without it, as making it a check does
+        # (Nov 27 audit): the same permission. The conditional waiver is on every list (M16).
+        if body.get("use_client") is True:
+            payer = _payer(state, job["payer_id"])
+            new_labels = [] if payer.get("no_paperwork") else parse_packet_text(payer.get("packet", "")) or list(DEFAULT_PAPERWORK["GC" if payer.get("role") == "GC" else "Owner"])
+        else:
+            text = body.get("packet") if isinstance(body.get("packet"), str) else ""
+            new_labels = [] if body.get("no_paperwork") is True else parse_packet_text(text)
+        staying = {g["key"] for g in _gate_rows(job, new_labels)}
+        if any(g["gate"] == "hard" and g["key"] not in staying for g in before["gates"]):
+            raise GateError(OVERRIDE_PERM, fields={"packet": OVERRIDE_PERM})
     took_back = False
     if body.get("use_client") is True:
         job.pop("paperwork_labels", None)
@@ -5492,23 +5504,37 @@ def _add_ticket_item(job: dict[str, Any], invoice: dict[str, Any], payer: dict[s
     them (skip_packet_item; B7 of the Oct 30 review) gets the item as not needed, with the reason.
     Returns whether a required one was added."""
     covers = _work_billed_by_ticket(job, invoice)
-    packet = invoice.get("packet") or []
     if not covers:
         return False
+    if not isinstance(invoice.get("packet"), list):
+        invoice["packet"] = []
+    packet = invoice["packet"]   # the invoice's own list: an empty one is added to, not a copy
+    # Two items since Nov 26, as the client's lists are (_SPLIT_LABELS): each one the list already
+    # has takes the work it covers and the change-order hard stop; a missing one is added (Nov 27 audit).
+    has = set()
     for item in packet:
-        if (_record_kinds_for(item) or ("",))[0] in ("ticket", "time_sheet"):
+        name = (_record_kinds_for(item) or ("",))[0]
+        if name in ("ticket", "time_sheet"):
             item["covers"] = covers
             _ticket_gate(item, covers)
-            return False
-    item = _packet_item(invoice["id"], "ticket", TICKETS_AND_SHEETS, f"{TICKETS_AND_SHEETS} are missing.")
-    item["covers"] = covers
-    _ticket_gate(item, covers)
-    packet.append(item)
+            label = str(item.get("label") or "")
+            # By what its label names; an older combined item covers both, one with neither word its kind.
+            named = {k for k, words in (("ticket", r"ticket"), ("time_sheet", r"time ?sheet")) if re.search(words, label, re.I)}
+            has |= named or {name}
     skipped = (payer or {}).get("tickets_not_needed")
-    if skipped:
-        item.update(required=False, skipped_reason=skipped.get("reason") or "Not needed for this client", skipped_at=utcnow())
-        return False
-    return True
+    added = False
+    for kind, label in (("ticket", _SPLIT_LABELS[TICKETS_AND_SHEETS.lower()][0]), ("time_sheet", _SPLIT_LABELS[TICKETS_AND_SHEETS.lower()][1])):
+        if kind in has:
+            continue
+        item = _packet_item(invoice["id"], kind, label, f"{label} are missing.")
+        item["covers"] = covers
+        _ticket_gate(item, covers)
+        packet.append(item)
+        if skipped:
+            item.update(required=False, skipped_reason=skipped.get("reason") or "Not needed for this client", skipped_at=utcnow())
+        else:
+            added = True
+    return added
 
 
 def _kind_problem(has: str, needs: str) -> str:
