@@ -53,5 +53,44 @@ class UndatedEarlierPaymentsTests(unittest.TestCase):
         self.assertIn("Payments received: 0,", body)
 
 
+
+class ClientFormValuesTests(unittest.TestCase):
+    def test_application_number_is_the_pay_apps_own(self):
+        """After earlier pay apps entered as one summary through PA-04, the next pay app is PA-05;
+        the client's form said Application No. 2."""
+        import gcforms
+        state, job, labor, _materials = schedule_job(retainage=10)
+        domain.import_earlier_payapps(state, job["id"], {"summary": {
+            "number": "4", "period_to": DAY, "lines": {labor: {"to_date": "6000"}}, "retainage": "600", "paid": "5400", "paid_on": DAY}})
+        domain.record_sov_progress(state, job["id"], {labor: "0.7"})
+        inv = send(state, job)
+        values, _rows = gcforms.payapp_values(state, job, inv)
+        self.assertEqual((inv["number"], values["application_count"]), ("PA-PINE-05", 5))
+
+    def test_change_orders_as_of_the_pay_app(self):
+        """Additions and deductions counted every change order signed now, so a pay app's form
+        filled after a later change order showed it, against a net change of $0."""
+        import gcforms
+        state, job, labor, _materials = schedule_job(retainage=10)
+        domain.add_change_order(state, job["id"], "Credit", -20_000)
+        domain.approve_change_order(state, job["id"], job["change_orders"][-1]["id"])
+        domain.record_sov_progress(state, job["id"], {labor: "0.5"})
+        domain.add_change_order(state, job["id"], "Unsigned extra", 30_000)
+        domain.include_change_order(state, job["id"], job["change_orders"][-1]["id"])
+        approve_unsigned = job["change_orders"][-1]
+        inv = next(i for i in job["invoices"] if i["status"] in domain.DRAFT_STATUSES)
+        values, _rows = gcforms.payapp_values(state, job, inv)
+        self.assertEqual((values["co_additions"], values["co_deductions"], values["net_change_orders"]), (30_000, 20_000, 10_000))
+        inv["status"], inv["sent_at"] = "sent", domain.utcnow()
+        inv["contract_at_send"] = __import__("payapp_pdf").contract_terms(job)
+        domain.add_change_order(state, job["id"], "Later", 100_000)
+        later = job["change_orders"][-1]
+        later["status"], later["approved_at"] = "approved", "2999-01-01T10:00:00+00:00"
+        values, _rows = gcforms.payapp_values(state, job, inv)
+        self.assertEqual((values["co_additions"], values["co_deductions"], values["net_change_orders"]), (30_000, 20_000, 10_000))
+        self.assertEqual(values["co_additions"] - values["co_deductions"], values["net_change_orders"])
+        self.assertEqual(approve_unsigned["status"], "pending")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -469,6 +469,33 @@ def sheet_rows(job: dict[str, Any], invoice: dict[str, Any]) -> list[dict[str, A
     return rows
 
 
+def _application_no(invoice: dict[str, Any], fallback: int) -> int:
+    """The pay app's own number as a plain number (PA-PINE-05 is 5): a number pulled back isn't used
+    again, and earlier pay apps entered as one summary stand for all those before it, so counting
+    the pay apps on the job would put another number on the client's form than on the pay app."""
+    m = re.search(r"(\d+)\s*$", str(invoice.get("number") or ""))
+    return int(m.group(1)) if m else fallback
+
+
+def _change_orders_on(job: dict[str, Any], invoice: dict[str, Any]) -> list[int]:
+    """The change orders in line 2 of this pay app, as payapp_pdf.summary counts them: those signed
+    by the time it went (a later one is on the next pay app), and those billed on it or before
+    while still unsigned. Their additions less their deductions is the net change on the form."""
+    at = invoice.get("sent_at") or (invoice.get("voided_at") if invoice.get("status") == "void" else None)
+    terms = payapp_pdf.terms_for(job, invoice)
+    pending = {co["id"] for co in terms["pending_cos"]}
+    approved = [co["amount_cents"] for co in job.get("change_orders", []) if co.get("status") == "approved"
+                and co["id"] not in pending and (at is None or not co.get("approved_at") or str(co["approved_at"]) <= at)]
+    order = job.get("invoices", [])
+    position = next((i for i, inv in enumerate(order) if inv is invoice or inv.get("id") == invoice.get("id")), len(order))
+    unsigned: dict[str, int] = {}
+    for inv in [inv for inv in order[:position] if inv.get("status") in payapp_pdf.LIVE] + [invoice]:
+        for line in inv.get("lines", []):
+            if line.get("co_id") in pending:
+                unsigned[line["co_id"]] = line["amount_cents"]
+    return approved + list(unsigned.values())
+
+
 def payapp_values(state: dict[str, Any], job: dict[str, Any], invoice: dict[str, Any], today: date | None = None) -> tuple[dict, list[dict]]:
     """Every Duracash value for one pay app: (values by source, continuation rows)."""
     today = today or date.today()
@@ -481,7 +508,7 @@ def payapp_values(state: dict[str, Any], job: dict[str, Any], invoice: dict[str,
     earlier = [inv for inv in live[:position] if inv.get("period_to")]
     start = _day(earlier[-1]["period_to"]) + timedelta(days=1) if earlier and _day(earlier[-1]["period_to"]) else _day(job.get("started_on"))
     owner_client = domain.client_type_role(payer.get("client_type")) == "Owner" if payer.get("client_type") else payer.get("role") == "Owner"
-    approved = [co["amount_cents"] for co in job.get("change_orders", []) if co.get("status") == "approved"]
+    approved = _change_orders_on(job, invoice)
     pct_ret = int(invoice.get("retainage_pct", job.get("retainage_pct")) or 0)
     v: dict[str, Any] = {
         "project_name": job.get("name", ""), "project_address": job.get("address", ""), "job_code": job.get("code", ""),
@@ -490,7 +517,7 @@ def payapp_values(state: dict[str, Any], job: dict[str, Any], invoice: dict[str,
         "client": payer.get("name", ""), "client_contact": payer.get("approver", ""),
         "contractor": company.get("name", ""), "contractor_address": company.get("address", ""),
         "contractor_phone": company.get("phone", ""), "contractor_license": company.get("license", ""),
-        "application_number": invoice.get("number", ""), "application_count": position + 1,
+        "application_number": invoice.get("number", ""), "application_count": _application_no(invoice, position + 1),
         "application_date": _day(invoice.get("sent_at")) or today,
         "period_from": start, "period_to": _day(invoice.get("period_to")), "payment_due": _day(invoice.get("due_on")),
         "final": bool(invoice.get("final")),
