@@ -90,6 +90,10 @@ class ClientFormValuesTests(unittest.TestCase):
         self.assertEqual((values["co_additions"], values["co_deductions"], values["net_change_orders"]), (30_000, 20_000, 10_000))
         self.assertEqual(values["co_additions"] - values["co_deductions"], values["net_change_orders"])
         self.assertEqual(approve_unsigned["status"], "pending")
+        # Signed in the same second the pay app went: the pay app says what it was sent against.
+        later["approved_at"] = inv["sent_at"]
+        values, _rows = gcforms.payapp_values(state, job, inv)
+        self.assertEqual((values["co_additions"], values["co_deductions"]), (30_000, 20_000))
 
 
 

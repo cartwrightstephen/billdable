@@ -119,11 +119,12 @@ def contract_terms(job: dict[str, Any], at: str | None = None) -> dict[str, Any]
     def by_then(when: Any) -> bool:
         return at is None or not when or str(when) <= at
 
-    approved, pending = 0, []
+    approved, pending, signed = 0, [], []
     for co in job.get("change_orders", []):
         status = co.get("status")
         if status == "approved" and by_then(co.get("approved_at")):
             approved += co["amount_cents"]
+            signed.append({"id": co["id"], "amount_cents": co["amount_cents"]})
         elif status in {"pending", "approved"} or (status == "withdrawn" and not by_then(co.get("withdrawn_at"))):
             pending.append({"id": co["id"], "number": co.get("number", ""), "amount_cents": co["amount_cents"]})
     payments = job.get("retainage_payments") or []
@@ -133,6 +134,7 @@ def contract_terms(job: dict[str, Any], at: str | None = None) -> dict[str, Any]
     return {
         "original_cents": job["contract_cents"],
         "approved_co_cents": approved,
+        "approved_cos": signed,   # each one in line 2, for a form that lists additions and deductions (gcforms)
         "pending_cos": pending,
         "released_cents": released,
         "op_bp": bp,

@@ -481,11 +481,14 @@ def _change_orders_on(job: dict[str, Any], invoice: dict[str, Any]) -> list[int]
     """The change orders in line 2 of this pay app, as payapp_pdf.summary counts them: those signed
     by the time it went (a later one is on the next pay app), and those billed on it or before
     while still unsigned. Their additions less their deductions is the net change on the form."""
-    at = invoice.get("sent_at") or (invoice.get("voided_at") if invoice.get("status") == "void" else None)
     terms = payapp_pdf.terms_for(job, invoice)
     pending = {co["id"] for co in terms["pending_cos"]}
-    approved = [co["amount_cents"] for co in job.get("change_orders", []) if co.get("status") == "approved"
-                and co["id"] not in pending and (at is None or not co.get("approved_at") or str(co["approved_at"]) <= at)]
+    if "approved_cos" in terms:
+        approved = [co["amount_cents"] for co in terms["approved_cos"]]
+    else:   # kept at send before each one was: by the dates, as contract_terms reads them
+        at = invoice.get("sent_at") or (invoice.get("voided_at") if invoice.get("status") == "void" else None)
+        approved = [co["amount_cents"] for co in job.get("change_orders", []) if co.get("status") == "approved"
+                    and co["id"] not in pending and (at is None or not co.get("approved_at") or str(co["approved_at"]) <= at)]
     order = job.get("invoices", [])
     position = next((i for i, inv in enumerate(order) if inv is invoice or inv.get("id") == invoice.get("id")), len(order))
     unsigned: dict[str, int] = {}
