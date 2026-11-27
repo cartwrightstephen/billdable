@@ -92,3 +92,8 @@ test("Earlier pay apps by % complete: the % is inside each line's box", () => {
   const src = readFileSync(new URL("../../static/js/views/job-payapp-core.js", import.meta.url), "utf8");
   assert.match(src, /\$\{earlierLinesAs === "pct" \? `<span class="with-suffix inline">` : ""\}<input id="ep-line-/);
 });
+
+test("the browser tab says Edit job record while a saved one is being changed", () => {
+  const app = readFileSync(new URL("../../static/app.js", import.meta.url), "utf8");
+  assert.match(app, /if \(currentView === "daily" && daily\.editing\) return "Edit job record · Duracash";/);
+});

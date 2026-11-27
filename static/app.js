@@ -27,6 +27,7 @@ import { approverTick } from "./js/approvers.js";
 import { handleTokenLink, tokenScreen, renderLanding, rememberSignIn, renderOutage, setDataNotice, setAuthMode, checkDemo, verifyBannerHtml, heldShareHtml } from "./js/views/auth.js";
 import { setAiVisible, updateAiContext } from "./js/views/helper.js";
 import { focusSignature, findBySignature } from "./js/dom.js";
+import { daily } from "./js/views/daily.js";
 
 // ---------- navigation: six destinations with tabs; every page has its own address ----------
 // On a phone the menu shows five; Import/Export goes under More (styles.css). Round 1 (item 19)
@@ -82,6 +83,8 @@ function pageTitle() {
   if (currentView === "helper-admin" && !helperAdmin) return "Page not found · Duracash";
   const j = currentJobId && state.jobs.find(x => x.id === currentJobId);
   const parent = DETAIL_PARENT[currentView];
+  // Edit on a saved job record opens the same page under its own heading (Nov 27 hunt: the tab read New job record).
+  if (currentView === "daily" && daily.editing) return "Edit job record · Duracash";
   const name = currentView === "job" && j ? unesc(j.name) : parent && j ? `${tabLabel(parent)}: ${unesc(j.name)}`
     : OWN_TITLE[currentView] || tabLabel(currentView) || (parent && tabLabel(parent)) || sectionOf(currentView).label;
   return `${name} · Duracash`;
