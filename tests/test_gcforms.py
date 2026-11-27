@@ -356,6 +356,21 @@ class SendPath(Uploads):
         self.assertEqual(len(sent), 1)
         self.assertFalse([n for n in self.attachments(sent[0]) if "client-form" in n])
 
+    def test_a_draft_sent_for_review_goes_on_duracash_pdf_even_with_an_unfinished_form(self):
+        # Integration (Nov 27, gc-forms open question): a pencil copy skips the client's form, so a
+        # form still being set up (here a value missing) doesn't fail that email.
+        gcforms.set_send(self.state, self.payer_id, "theirs", "Pat")
+        gcforms.save_mapping(self.state, self.payer_id, self.tpl["id"], {"mapping": [
+            {"field": "ContractSum", "source": "original_contract"}, {"field": "AppNo", "source": "contract_number"}]}, "Pat")
+        self.assertTrue(gcforms.send_problems(self.state, self.job["id"]), "the form isn't ready for the pay app itself")
+        domain.send_pencil(self.state, self.job["id"], "Owner")
+        sent = self.deliver()
+        entry = self.state["email_log"][-1]
+        self.assertEqual((entry["kind"], entry["status"]), ("pencil", "sent"))
+        files = self.attachments(sent[-1])
+        self.assertFalse([n for n in files if "client-form" in n])
+        self.assertTrue([n for n in files if n.endswith(".pdf")], "Duracash's PDF goes")
+
     def test_a_form_missing_a_value_stops_the_send_and_fails_an_email_already_queued(self):
         gcforms.save_mapping(self.state, self.payer_id, self.tpl["id"], {"mapping": [
             {"field": "ContractSum", "source": "original_contract"}, {"field": "AppNo", "source": "contract_number"}]}, "Pat")

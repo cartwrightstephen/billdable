@@ -57,7 +57,9 @@ SEND_MODES = {
     "both": "Both: the client's form and Duracash's PDF",
 }
 DEFAULT_SEND = "both"
-EMAIL_KINDS = ("pay_app", "pencil")   # the emails that carry the client's form: the pay app and its draft for review
+# The emails that carry the client's form: the pay app itself. Its draft sent for review (a pencil
+# copy) goes on Duracash's PDF, so a form not finished yet never fails that email (Nov 27).
+EMAIL_KINDS = ("pay_app",)
 MONEY_FORMATS = {"dollars": "$1,234.56", "commas": "1,234.56", "plain": "1234.56"}
 DATE_FORMATS = {"long": "November 27, 2026", "us": "11/27/2026", "iso": "2026-11-27"}
 

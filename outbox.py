@@ -105,7 +105,7 @@ def deliver_queued(site, company_id: str, user: dict, only: set | None = None, r
                     e["failed_at"] = now.isoformat(timespec="seconds")
                     continue
                 # The client's own forms, filled in (gcforms.py): with Duracash's PDF, or in its place.
-                # Only on the pay app itself and its draft for review; a retainage request keeps ours.
+                # Only on the pay app itself; its draft for review and a retainage request keep ours.
                 theirs, ours_too, refused = [], True, ""
                 if e.get("kind") in gcforms.EMAIL_KINDS:
                     try:

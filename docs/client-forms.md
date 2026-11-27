@@ -53,7 +53,7 @@ The filled form is the client's original bytes, untouched, followed by an increm
 ## Open questions
 
 - Should a GC form that can't be filled hold the send even when the email carries both forms? Today it does.
-- Pencil copies (drafts sent for review) carry the client's form too; an incomplete one fails that email with the reason. Should they always go on Duracash's PDF?
+- Pencil copies (drafts sent for review) go on Duracash's PDF only, so a client form still being set up never fails that email (decided Nov 27). The pay app itself, once approved and sent, carries the client's form.
 - Should Duracash keep a shared library of common GC forms across companies (Siteline's moat), with each company's copy matched once?
 
 ## Sources
