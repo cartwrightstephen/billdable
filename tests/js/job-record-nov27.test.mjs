@@ -163,5 +163,6 @@ test("a record's label doesn't repeat the kind its pill says (Nov 27: \"Diary en
   assert.equal(rec.labelAfterKind("COI 2026", "Insurance"), "COI 2026");
   const html = rec.recordCardHtml(job({ records: [{ id: "r1", kind: "daily", label: "Diary entry 2026-11-27", note: "Walked it", added_at: "2026-11-27T12:00:00+00:00" }] }));
   assert.doesNotMatch(html, /Diary entry<\/span> Diary entry/);
-  assert.match(html, /2026-11-27/);
+  // The date stays, written as the page writes dates (hunt-ui's date wording: Nov 27, 2026).
+  assert.match(html, /<span class="pill">Diary entry<\/span> (2026-11-27|Nov 27, 2026)/);
 });
