@@ -368,7 +368,7 @@ class UpgradeBackupTests(unittest.TestCase):
         (self.root / server.SCHEMA_MARKER).unlink()
         auth.create_user("up@example.com", PASSWORD, "Pat", "co-up")
         made = server.backup_before_upgrade(log=lambda m: None)
-        self.assertTrue(made.name.endswith(f"-pre-upgrade-schema{migrations.SCHEMA_VERSION}.tar.gz"))
+        self.assertRegex(made.name, rf"-pre-upgrade-schema{migrations.SCHEMA_VERSION}\.tar\.gz(\.enc)?$")
         self.assertIn(made, backup.backups(), "with the other backups, so backup.py list and restore see it")
         self.assertIsNone(server.backup_before_upgrade(log=lambda m: None), "once per schema")
         storage.write_json(self.root / server.SCHEMA_MARKER, {"schema": migrations.SCHEMA_VERSION - 1, "auth_steps": len(migrations.AUTH_STEPS)})

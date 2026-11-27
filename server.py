@@ -69,6 +69,7 @@ import storage
 import store
 import trial
 import twilio_media
+import vault
 import demo_seed
 import waiver_form
 from seed import seed_state
@@ -550,12 +551,17 @@ def inbound_address(company_id: str) -> str:
 
 def delete_company_data(company_id: str) -> int:
     """Remove a company: its users and sessions, company file (and the copy of an imported JSON
-    file), reset snapshots, uploads, inbound and calendar addresses, helper and mail records, and
-    its QuickBooks connection. Backups that hold it expire on their own.
+    file), reset snapshots, uploads, inbound and calendar addresses, helper and mail records, its
+    QuickBooks connection and its Stripe billing record. Backups that hold it expire on their own
+    (BACKUP_KEEP_DAYS, backup.purge).
     Used by the owner's Delete the company and by admin.py for a deletion request. Returns how
     many users were removed."""
     removed = auth.delete_company_users(company_id)  # every session of the company ends here
     with company_lock(company_id):
+        try:
+            customer = str((company_store().load(company_id).get("company", {}).get("billing") or {}).get("customer_id") or "")
+        except Exception:  # no company file, or one that doesn't read: nothing to tell Stripe
+            customer = ""
         with _DELETED_LOCK:
             gone = sorted(deleted_companies() | {company_id})
             storage.write_json(_deleted_path(), gone)
@@ -573,6 +579,13 @@ def delete_company_data(company_id: str) -> int:
     sms.forget_company(company_id)
     reminders.forget_company(company_id)
     qbo.forget_company(company_id)   # its QuickBooks tokens too, revoked at Intuit (H4)
+    # Its Stripe billing record goes too (M5). A failure doesn't undo the deletion: it is alerted,
+    # for a person to delete it in Stripe's dashboard.
+    try:
+        billing.delete_customer(customer)
+    except Exception as exc:
+        log_json("error", msg="Stripe billing record not deleted", company=company_id, reason=str(exc)[:200])
+        alerts.notify(f"stripe-delete:{company_id}", f"{company_id} was deleted but its Stripe billing record wasn't ({exc.__class__.__name__}); delete it in Stripe's dashboard")
     return removed
 
 
@@ -4067,6 +4080,13 @@ def stop_on_sigterm(server: "Server") -> None:
 
 
 def main() -> None:
+    # The server key (H3, vault.py): production and staging refuse to start without it; a laptop
+    # makes one in the data directory.
+    key_problem = vault.problem()
+    if key_problem:
+        log_json("error", msg=f"Refusing to start: {key_problem}")
+        sys.exit(1)
+    vault.master()
     problems = config_problems()
     if problems:
         for problem in problems:

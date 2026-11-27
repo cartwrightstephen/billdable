@@ -704,7 +704,8 @@ class ImportHttpTests(unittest.TestCase):
         for t in threads: t.start()
         for t in threads: t.join()
         stored = importer.load_tokens()
-        self.assertTrue(all(tok in stored for tok in results))
+        self.assertTrue(all(importer._token_key(tok) in stored for tok in results))
+        self.assertFalse(any(tok in json.dumps(stored) for tok in results), "the file holds no token in the clear")
 
 
 if __name__ == "__main__":

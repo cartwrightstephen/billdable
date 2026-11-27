@@ -22,10 +22,12 @@ version 75 is the floor: Intuit answers anything lower, or nothing, as 75. No li
 connected yet; the first one is the last test (the checklist in that doc), and the stand-in in
 tests/test_qbo.py shows the shapes this code expects.
 
-Tokens are kept in <data dir>/qbo_connections.json, outside the backups on purpose (backup.py
-leaves the file out, and reads past it in older backups): after a restore onto a new disk an owner
-connects again. Deleting a company (server.delete_company_data) drops its tokens and any Connect in
-progress, and asks Intuit to revoke them (forget_company, H4).
+Tokens are kept in <data dir>/qbo_connections.json, encrypted with the server key (H3,
+vault.py: DURACASH_SECRET_KEY), and outside the backups on purpose (backup.py leaves the file out,
+and reads past it in older backups): after a restore onto a new disk an owner connects again.
+Tokens written before encryption are read as they are and encrypted the next time the connection
+is saved (the next refresh). Deleting a company (server.delete_company_data) drops its tokens and
+any Connect in progress, and asks Intuit to revoke them (forget_company, H4).
 """
 
 from __future__ import annotations
@@ -46,6 +48,7 @@ from urllib import error, parse, request
 import domain
 import qbo_csv
 import storage
+import vault
 
 SCOPE = "com.intuit.quickbooks.accounting"
 AUTHORIZE_URL = "https://appcenter.intuit.com/connect/oauth2"
@@ -100,9 +103,25 @@ def _all() -> dict[str, Any]:
         return {}
 
 
+SECRET_FIELDS = ("access_token", "refresh_token")
+
+
+def _opened(company_id: str, conn: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not conn:
+        return conn
+    out = dict(conn)
+    try:
+        for field in SECRET_FIELDS:
+            if out.get(field):
+                out[field] = vault.open_sealed(out[field], f"qbo:{company_id}")
+    except vault.VaultError:
+        raise QboError("The QuickBooks connection can't be read on this server. Connect again.") from None
+    return out
+
+
 def connection(company_id: str) -> dict[str, Any] | None:
     with LOCK:
-        return _all().get(company_id)
+        return _opened(company_id, _all().get(company_id))
 
 
 def _store(company_id: str, conn: dict[str, Any] | None) -> None:
@@ -111,12 +130,14 @@ def _store(company_id: str, conn: dict[str, Any] | None) -> None:
         if conn is None:
             data.pop(company_id, None)
         else:
-            data[company_id] = conn
+            data[company_id] = {k: vault.seal(v, f"qbo:{company_id}") if k in SECRET_FIELDS and v else v
+                                for k, v in conn.items()}
         storage.write_json(_path(), data)
 
 
 def status(company_id: str) -> dict[str, Any]:
-    conn = connection(company_id)
+    with LOCK:
+        conn = _all().get(company_id)  # no tokens needed, so nothing to decrypt
     return {
         "configured": configured(),
         "environment": settings()["env"],
@@ -207,8 +228,12 @@ def _take(company_id: str) -> dict[str, Any] | None:
     """Remove a company's tokens from the file; returns them. After any refresh in flight, so it
     can't put the connection back; its newer token is the one revoked."""
     with _REFRESH_LOCK:
-        conn = connection(company_id)
-        if conn:
+        try:
+            conn = connection(company_id)
+        except QboError:  # tokens this server's key can't open: nothing to revoke, still removed
+            with LOCK:
+                conn = {} if company_id in _all() else None
+        if conn is not None:
             _store(company_id, None)
     return conn
 

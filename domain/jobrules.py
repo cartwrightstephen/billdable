@@ -370,7 +370,8 @@ def approve_payapp(state: dict[str, Any], job_id: str, actor: str = "owner", act
                       "stamp": approval_stamp(state, job, invoice), "consent": APPROVAL_CONSENT,
                       "ip": str(ip or "")[:64], "user_agent": str(user_agent or "")[:200]})
     invoice["approvals"] = approvals
-    audit(state, job_id, "payapp_approved", f"{actor} signed {invoice['number']} for {money(invoice['amount_cents'])} to go (signed as {signed}).", actor)
+    audit(state, job_id, "payapp_approved", f"{actor} signed {invoice['number']} for {money(invoice['amount_cents'])} to go (signed as {signed}).", actor,
+          record=(f"approval:{job_id}:{invoice['id']}:{actor_id}", approvals[-1]))
     return job
 
 

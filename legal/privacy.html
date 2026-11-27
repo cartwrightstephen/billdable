@@ -41,7 +41,7 @@
 <h2>4. How long we keep it</h2>
 <ul>
   <li>Company data, files and account details are kept while the account is open.</li>
-  <li>When an owner deletes the company account, we immediately delete its jobs, records, files, Outbox, audit trail, helper questions, users and inbound addresses. Copies inside our backups are deleted as those backups expire, within {{BACKUP_DAYS}} days.</li>
+  <li>When an owner deletes the company account, we immediately delete its jobs, records, files, Outbox, audit trail, helper questions, users and inbound addresses. Copies inside our backups are deleted as those backups expire: on our server within {{BACKUP_DAYS}} days, and in our encrypted off-site copies within {{OFFSITE_DAYS}} days. If the company had a Stripe billing account, we ask Stripe to delete the customer record; Stripe may keep payment records it is required to keep.</li>
   <li>Password-reset links expire after one hour, confirmation links after three days and invitations after seven days.</li>
   <li>Hosting provider logs are kept according to that provider's retention settings.</li>
 </ul>

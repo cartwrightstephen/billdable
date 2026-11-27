@@ -50,17 +50,22 @@ roll back and check the disk's mount path matches `DURACASH_DATA_DIR`.
 
 ## 2. Restore from a backup
 
-Local backups (on the disk, newest 14 kept):
+Local backups (on the disk: removed once `BACKUP_KEEP_DAYS` old, default 14, and beyond the
+newest `BACKUP_KEEP`). They are `.tar.gz.enc` files, encrypted with the server key
+(`DURACASH_SECRET_KEY`): restore and drill decrypt them, so the server key must be the one they
+were made with. Older plain `.tar.gz` backups restore as before.
 
 ```bash
 python3 backup.py list
 ```
 
 1. In Render, **Suspend** the service so nothing writes during the restore.
-2. In the Shell tab: `python3 backup.py restore /var/data/backups/<file>.tar.gz`. The current
-   data is moved to `/var/data/pre-restore-<time>/`, never deleted. That includes the list of
-   deleted companies and the monthly and daily job records: the backup's copies come back with
-   the companies, so a company deleted after the backup is back
+2. In the Shell tab: `python3 backup.py restore /var/data/backups/<file>.tar.gz.enc`. A backup
+   that was changed, is damaged or was made with another key is refused before anything moves.
+   The current data is moved to `/var/data/pre-restore-<time>/`, which the hourly sweep removes
+   once `BACKUP_KEEP_DAYS` old (copy it off first if you need it longer). That includes the list of
+   deleted companies and the monthly and daily job records: the
+   backup's copies come back with the companies, so a company deleted after the backup is back
    and can be changed. A backup made with `BACKUP_UPLOADS=0` leaves the uploads on the disk as
    they are; to restore them too, use the off-site copy.
 3. **Resume** the service and sign in.
@@ -71,7 +76,12 @@ From the off-site copy (disk lost, or the local backups are bad):
 2. On a laptop with the age private key: `age -d -i key.txt FILE.age > backup.tar.gz`
 3. Copy `backup.tar.gz` to the server (or restore on a laptop to inspect it first with
    `DURACASH_DATA_DIR=/tmp/check python3 backup.py restore backup.tar.gz`), then follow the
-   local steps above.
+   local steps above. The off-site copy is encrypted with age only, so the age key opens it;
+   but the two-step sign-in keys, QuickBooks tokens and inbound addresses inside it are
+   encrypted with `DURACASH_SECRET_KEY`, and the audit trail is keyed with it. Set the same
+   `DURACASH_SECRET_KEY` on the new server. If it is lost too: everyone with two-step sign-in
+   needs it reset, owners connect QuickBooks again, inbound addresses need **Make a new
+   address**, and `audit_check.py` reports rows written since Nov 27 2026 as broken.
 
 **Monthly drill.** A backup nobody has restored is a guess. Once a month, in the Shell tab
 (the server can keep running; nothing live is touched):
@@ -100,6 +110,7 @@ redeploys with the new value.
 | `BACKUP_S3_KEY_ID`, `BACKUP_S3_SECRET` | B2 application keys (write-only) | `python3 backup.py upload` in the Shell; `python3 admin.py health` shows a new `offsite_backup` |
 | `BACKUP_AGE_RECIPIENT` | `age-keygen` on a laptop; store the private key in both password managers | Upload one backup and decrypt it on the laptop before deleting the old key |
 | `ALERT_WEBHOOK_URL` | Slack or Better Stack | The next crash or failed backup posts there |
+| `DURACASH_SECRET_KEY` | `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`; store it in both password managers | Not rotatable in place yet: a new key can't read the old encrypted values, backups or audit rows. Change it only after a leak, and expect the losses listed in runbook 2 |
 
 A customer's inbound email, text or calendar address that leaked: the owner uses
 **Make a new address** in the app (Inbox or Calendar). Signing someone out everywhere:
@@ -134,7 +145,10 @@ can't (they lost access, or asked by email):
    **Export data** while they can still sign in.
 4. `python3 admin.py delete-company <company id>` and type the id to confirm.
 5. Tell them it is done, and that copies in backups expire on their own: local backups after
-   `BACKUP_KEEP` days, off-site copies after the bucket's retention (about 35 days).
+   `BACKUP_KEEP_DAYS` days, off-site copies after the bucket's retention (`BACKUP_OFFSITE_DAYS`,
+   about 35 days). The deletion also deletes the company's Stripe customer (which cancels its
+   subscription) when billing is set up; if Stripe refused, an alert says so: delete the customer
+   in Stripe's dashboard (**Customers → … → Delete customer**).
 
 ## 4a. Put a company on hold (read-only)
 
@@ -158,7 +172,12 @@ Something is down, data looks wrong, or a leak is suspected.
 3. **Tell the other founder** with what you know and don't know.
 4. **Fix**: roll back the deploy (runbook 1, step 5), or restore (runbook 2).
 5. **Check the audit trail**: `python3 audit_check.py` names any company whose audit rows were
-   changed after they were written.
+   changed after they were written. The server also runs this every day and alerts
+   (`audit-chain:<company>`). Rows since Nov 27 2026 are keyed with `DURACASH_SECRET_KEY`, so they
+   can't be rebuilt without it; a signature on a change order or pay app approval that was changed
+   breaks the chain at its row; and a trail shorter than, or different from, the last check's
+   anchor (`audit_anchors.json`) fails too. Don't "fix" a broken trail: keep the file as evidence
+   and restore the company from a backup made before the change.
 6. **Write it down** within two days: what happened, when, who was affected, what was done, and
    what stops it happening again. If customer data may have been exposed, ask the lawyer what
    notice the law and the Privacy Policy require before telling customers.

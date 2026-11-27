@@ -55,6 +55,12 @@ services:
       # in the log on every start. Remove it once off-site backups and alerts work.
       - key: DURACASH_ALLOW_NO_OFFSITE
         sync: false
+      # The server key (vault.py): encrypts two-step keys, QuickBooks tokens and the local
+      # backups, and keys the audit trail. Production refuses to start without it. Make it with
+      # python3 -c "import secrets; print(secrets.token_urlsafe(32))" and keep a copy in both
+      # password managers: without it the backups can't be read.
+      - key: DURACASH_SECRET_KEY
+        sync: false
 
   # Staging (P1-13): deploys dev, so a change is tried on a real server before main.
   # Free plan, no disk: its data is throwaway and the landing page says so.
@@ -75,6 +81,9 @@ services:
       # The demo's password is public (security review M9): visitors look around, nothing changes.
       - key: DURACASH_DEMO
         value: readonly
+      # Throwaway data, so Render makes the server key (staging refuses to start without one).
+      - key: DURACASH_SECRET_KEY
+        generateValue: true
       - key: COOKIE_SECURE
         value: "1"
       - key: DURACASH_URL

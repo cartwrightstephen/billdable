@@ -22,6 +22,7 @@ from typing import Any
 
 import storage
 import totp
+import vault
 
 AUTH_PATH = storage.DATA_DIR / "auth.json"
 LOCK = threading.Lock()
@@ -179,7 +180,35 @@ def _load() -> dict[str, Any]:
     return data
 
 
+# Two-step sign-in keys are kept encrypted with the server key (H3, vault.py), bound to the user.
+# A plaintext one from before that still works and is encrypted the next time the file is written.
+TOTP_FIELDS = ("totp_secret", "totp_pending")
+
+
+def _totp_context(user: dict[str, Any]) -> str:
+    return f"totp:{user.get('id', '')}"
+
+
+def _seal_secrets(data: dict[str, Any]) -> bool:
+    changed = False
+    for user in data.get("users", []):
+        for field in TOTP_FIELDS:
+            value = user.get(field)
+            if value and not vault.sealed(value):
+                user[field] = vault.seal(value, _totp_context(user))
+                changed = True
+    return changed
+
+
+def _totp_key(user: dict[str, Any], field: str) -> str:
+    try:
+        return vault.open_sealed(user.get(field) or "", _totp_context(user))
+    except vault.VaultError:
+        raise AuthError("Two-step sign-in can't be checked on this server right now. Contact Duracash support.") from None
+
+
 def _save(data: dict[str, Any]) -> None:
+    _seal_secrets(data)
     storage.write_json(AUTH_PATH, data)
 
 
@@ -210,7 +239,8 @@ def upgrade_file(steps: Any = ()) -> None:
         stale = not json.loads(AUTH_PATH.read_text()).get("sessions_hashed")
         data = _load()
         changed = [step(data) for step in steps]
-        if stale or any(changed):
+        plain = _seal_secrets(data)
+        if stale or any(changed) or plain:
             _save(data)
 
 
@@ -1266,9 +1296,10 @@ def totp_begin(user_id: str, password: Any = None) -> dict[str, str]:
             raise AuthError("The demo account can't use two-step sign-in.")
         if user.get("totp_enabled"):
             raise AuthError("Two-step sign-in is already on.")
-        user["totp_pending"] = totp.new_secret()
+        secret = totp.new_secret()
+        user["totp_pending"] = vault.seal(secret, _totp_context(user))
         _save(data)
-        return {"secret": user["totp_pending"], "uri": totp.uri(user["totp_pending"], user["email"])}
+        return {"secret": secret, "uri": totp.uri(secret, user["email"])}
 
 
 def totp_enable(user_id: str, code: Any) -> list[str]:
@@ -1276,14 +1307,13 @@ def totp_enable(user_id: str, code: Any) -> list[str]:
     with LOCK:
         data = _load()
         user = _user(data, user_id)
-        pending = user.get("totp_pending")
-        if not pending:
+        if not user.get("totp_pending"):
             raise AuthError("Start setup first.")
-        counter = totp.verify(pending, code)
+        counter = totp.verify(_totp_key(user, "totp_pending"), code)
         if counter is None:
             raise AuthError("That code didn't match. Check the phone's clock and type the code showing now.")
         codes = [f"{secrets.token_hex(2)}-{secrets.token_hex(2)}" for _ in range(RECOVERY_CODES)]
-        user.update(totp_secret=pending, totp_enabled=True, totp_last=counter, totp_recovery=[_digest(c) for c in codes])
+        user.update(totp_secret=user["totp_pending"], totp_enabled=True, totp_last=counter, totp_recovery=[_digest(c) for c in codes])
         user.pop("totp_pending", None)
         _save(data)
         return codes
@@ -1300,7 +1330,7 @@ def totp_check(user_id: str, code: Any, ip: str | None = None) -> bool:
         if not user.get("totp_enabled"):
             return True
         raw = str(code or "").strip().lower()
-        counter = totp.verify(user["totp_secret"], raw, int(user.get("totp_last", -1)))
+        counter = totp.verify(_totp_key(user, "totp_secret"), raw, int(user.get("totp_last", -1)))
         if counter is not None:
             user["totp_last"] = counter
             _save(data)

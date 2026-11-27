@@ -4228,7 +4228,8 @@ def add_change_order(
     return job
 
 
-def approve_change_order(state: dict[str, Any], job_id: str, co_id: str, actor: str = "owner") -> dict[str, Any]:
+def approve_change_order(state: dict[str, Any], job_id: str, co_id: str, actor: str = "owner",
+                         record: tuple[str, Any] | None = None) -> dict[str, Any]:
     job = _open_job(state, job_id)
     co = next((c for c in job["change_orders"] if c["id"] == co_id), None)
     if not co:
@@ -4254,7 +4255,7 @@ def approve_change_order(state: dict[str, Any], job_id: str, co_id: str, actor: 
             for line in inv.get("lines", []):
                 if line.get("co_id") == co_id:
                     line["label"] = f"CO {co['number']} — {co['title']}"
-    audit(state, job_id, "approve_co", f"{actor} approved CO {co['number']} — {co['title']}.", actor)
+    audit(state, job_id, "approve_co", f"{actor} approved CO {co['number']} — {co['title']}.", actor, record=record)
     # A final draft not sent yet bills what is left, so it follows the change. One with the client
     # stays as they have it; if it goes out over the new total, close_blocker_items says so.
     draft = next((inv for inv in job["invoices"] if inv["status"] in DRAFT_STATUSES), None)
@@ -4363,7 +4364,9 @@ def sign_change_order(
         "name": name, "at": utcnow(), "ip": str(ip)[:64], "user_agent": str(user_agent)[:200],
         "consent": CO_CONSENT, "snapshot": snap, "snapshot_sha256": snapshot_sha256(snap),
     }
-    approve_change_order(state, job["id"], co["id"], actor=f"{name} (signed online)")
+    # The signature record's hash goes into the audit chain (M6), so it can't be changed after.
+    approve_change_order(state, job["id"], co["id"], actor=f"{name} (signed online)",
+                         record=(f"co-signature:{job['id']}:{co['id']}", co["signature"]))
     _note_signed_after_start(state, job, co)
     return co
 

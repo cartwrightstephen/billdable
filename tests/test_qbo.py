@@ -217,7 +217,9 @@ class QboTests(unittest.TestCase):
         res, data = self.request("POST", "/api/qbo/payments", {}, cookie=cookie)
         self.assertEqual(res.status, 200, data)
         self.assertEqual({r["qbo_id"]: r["status"] for r in data["rows"]}, {"55": "already recorded", "56": "already recorded", "57": "no match"})
-        self.assertEqual(json.loads((storage.DATA_DIR / "qbo_connections.json").read_text())[cid]["refresh_token"], FakeIntuit.tokens["refresh"])
+        stored = json.loads((storage.DATA_DIR / "qbo_connections.json").read_text())[cid]["refresh_token"]
+        self.assertTrue(stored.startswith("enc1:"), "tokens are kept encrypted (H3)")
+        self.assertEqual(qbo.connection(cid)["refresh_token"], FakeIntuit.tokens["refresh"])
 
         res, rec = self.request("GET", "/api/qbo/reconcile", cookie=cookie)
         kinds = {(r["number"], r["kind"]) for r in rec["rows"]}

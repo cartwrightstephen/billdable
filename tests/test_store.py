@@ -111,7 +111,7 @@ class BackupWithSqliteTests(unittest.TestCase):
             db.save("co-1", seed_state())
             with mock.patch.object(storage, "DATA_DIR", root):
                 path = backup.make_backup()
-            with tarfile.open(path) as tar:
+            with backup.open_archive(path) as tar:
                 self.assertIn("companies/duracash.db", tar.getnames())
                 data = tar.extractfile("companies/duracash.db").read()
             copy = root / "restored" / "companies"
@@ -193,14 +193,14 @@ class RecoveryTests(unittest.TestCase):
         self.delete("co-1")
         self.assertFalse((aside / "co-1.json").exists())
         self.assertTrue((aside / "co-2.json").exists(), "another company's copy stays")
-        with tarfile.open(backup.make_backup()) as tar:
+        with backup.open_archive(backup.make_backup()) as tar:
             names = tar.getnames()
         self.assertFalse([n for n in names if n.endswith("co-1.json")], names)
 
     def test_backup_holds_the_small_files_beside_the_companies(self):
         for name in ("deleted_companies.json", "qbo_connections.json", "monthly_jobs.json", "daily_jobs.json"):
             (self.root / name).write_text("{}" if name != "deleted_companies.json" else "[]")
-        with tarfile.open(backup.make_backup()) as tar:
+        with backup.open_archive(backup.make_backup()) as tar:
             names = set(tar.getnames())
         self.assertLessEqual({"deleted_companies.json", "monthly_jobs.json", "daily_jobs.json"}, names)
         # QuickBooks tokens never go into a backup (H4): a deleted company's would outlive it there.
@@ -211,7 +211,7 @@ class RecoveryTests(unittest.TestCase):
         older = self.root / "backups" / "duracash-20260101T000000000000Z.tar.gz"
         older.parent.mkdir(parents=True, exist_ok=True)
         made = backup.make_backup()
-        with tarfile.open(made) as src, tarfile.open(older, "w:gz") as tar:
+        with backup.open_archive(made) as src, tarfile.open(older, "w:gz") as tar:
             for member in src.getmembers():
                 tar.addfile(member, src.extractfile(member))
             data = b'{"co-1": {"refresh_token": "from the backup"}}'
@@ -248,7 +248,7 @@ class RecoveryTests(unittest.TestCase):
         (self.root / "uploads" / "co-1" / "file-1.jpg").write_bytes(b"photo")
         with mock.patch.dict("os.environ", {"BACKUP_UPLOADS": "0"}):
             local = backup.make_backup()
-            with tarfile.open(local) as tar:
+            with backup.open_archive(local) as tar:
                 self.assertNotIn("uploads/co-1/file-1.jpg", tar.getnames())
                 self.assertIn(backup.UPLOADS_LEFT_OUT, tar.getnames())
             sent = []

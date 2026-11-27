@@ -29,7 +29,8 @@ MISSING = "[to be completed]"
 
 def details() -> dict[str, str]:
     cfg = backup.settings()
-    days = max(1, (cfg["keep"] * cfg["hours"] + 23) // 24) if cfg["hours"] else 1
+    # Local backups go once BACKUP_KEEP_DAYS old (or sooner, beyond BACKUP_KEEP of them), M5.
+    days = min(cfg["keep_days"], max(1, (cfg["keep"] * cfg["hours"] + 23) // 24)) if cfg["hours"] else cfg["keep_days"]
     return {
         "ENTITY": os.environ.get("LEGAL_ENTITY") or f"Duracash {MISSING}",
         "ADDRESS": os.environ.get("LEGAL_ADDRESS") or f"address {MISSING}",
@@ -40,6 +41,7 @@ def details() -> dict[str, str]:
         "EFFECTIVE": os.environ.get("LEGAL_EFFECTIVE") or TERMS_VERSION,
         "VERSION": TERMS_VERSION,
         "BACKUP_DAYS": str(days),
+        "OFFSITE_DAYS": str(cfg["offsite_days"]),
     }
 
 

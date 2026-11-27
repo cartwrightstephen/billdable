@@ -106,11 +106,11 @@ def _form(data: dict[str, Any], prefix: str = "") -> list[tuple[str, str]]:
     return out
 
 
-def _post(path: str, data: dict[str, Any]) -> dict[str, Any]:
+def _post(path: str, data: dict[str, Any], method: str = "POST") -> dict[str, Any]:
     s = settings()
     if not s["key"]:
         raise BillingError("Billing isn't set up on this server.")
-    req = request.Request(f"{s['api_base']}{path}", data=parse.urlencode(_form(data)).encode(), method="POST", headers={
+    req = request.Request(f"{s['api_base']}{path}", data=parse.urlencode(_form(data)).encode(), method=method, headers={
         "Authorization": f"Bearer {s['key']}", "Content-Type": "application/x-www-form-urlencoded"})
     try:
         with request.urlopen(req, timeout=TIMEOUT) as res:
@@ -123,6 +123,16 @@ def _post(path: str, data: dict[str, Any]) -> dict[str, Any]:
         raise BillingError(f"Stripe refused it ({exc.code}){': ' + message if message else ''}.") from None
     except (error.URLError, TimeoutError, ValueError) as exc:
         raise BillingError(f"Couldn't reach Stripe: {exc}") from None
+
+
+def delete_customer(customer_id: str) -> bool:
+    """When a company is deleted (M5): delete its Stripe customer, which also cancels its
+    subscriptions at once. Stripe keeps the payment records it must. False when there is
+    nothing to do (no customer, or billing isn't set up here); BillingError when Stripe refuses."""
+    if not customer_id or not settings()["key"]:
+        return False
+    _post(f"/v1/customers/{parse.quote(customer_id, safe='')}", {}, method="DELETE")
+    return True
 
 
 def record(state: dict[str, Any]) -> dict[str, Any]:
