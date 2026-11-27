@@ -151,6 +151,10 @@ Every new job has one (`sov.py`): the lines typed at New job, or one lump-sum li
 - Quantities can't exceed the line (extra scope is a change order) or drop below what was billed, in quantity or in dollars. Numbers must be plain decimals (no exponents), and pasted text is read in bounded pieces.
 - An approved change order adds its own lump-sum line at the CO amount, without markup. A CO billed while unsigned is not billed again when approved.
 - All amounts are whole cents with half-up rounding on integers; the browser repeats the same arithmetic for the live totals.
+- Stored materials (G703 column F) are entered per line on the Progress pay app page and billed when they arrive; total to date is previous + this period + stored. When later work passes where a line stood when its materials were stored, the page asks to move them into work done, so they are never billed twice. A pay app with new stored materials asks for each line's supplier invoice, receipt or photo (a check by default; Required per job), uploaded on the pay app's **Stored materials backup** card.
+- Retainage can be set per line (**Retainage by line**, blank for the job's percent) and per pay app for one period (**Retainage this period %** on a draft). The G702 summary splits line 5 into 5a (completed work) and 5b (stored materials).
+- **Bill retainage release** drafts a pay app with no new work that bills retainage held, all or part, at substantial completion or final (final: the work finished and billed, the closeout documents in). It is sent and paid like any pay app, and its payment brings its lien waiver due.
+- A job started mid-project takes its earlier pay apps (New job's **This job already has pay apps**, or Edit job): pay app by pay app (each line in dollars or % complete, retainage held, paid and when) or as totals to date, with the old PDFs kept on the job records. The next pay app's number and Previous column follow them; they are never emailed or put in QuickBooks.
 
 ## Reminders and texts
 
@@ -202,6 +206,7 @@ Tests write to a temporary directory, never to `data/`. GitHub Actions (`.github
 - `reminders.py`: reminders by app, email and text
 - `exports.py`, `job_archive.py`: the CSV lists and a finished job's zip
 - `payapp_pdf.py`: the pay app PDF
+- `domain/payapp_core.py`: earlier pay apps for a job started mid-project, retainage by line and for one pay app, the retainage-only pay app, and the backup each stored-materials line needs (Nov 27)
 - `trial.py`: trial status
 - `backup.py`: backups and restore
 - `offsite.py`: encrypted off-site copies of backups (age, S3-compatible upload)
