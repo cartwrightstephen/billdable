@@ -4,7 +4,7 @@
 import { esc, unesc, money, centsFrom, percentFrom, dollarsText, fmtDate, fmtDateTime, words, INVOICE_WORDS, invoicePill, emailStatusHtml } from "../format.js";
 import { activityAlsoHtml } from "../activity.js";
 import { deleteDraftText } from "../payapp-text.js";
-import { unpaidPayApps, payAppNames, shortDay, jobPageActions, oneLumpLine, lumpDollars, closeBlockerActions, finalPayAppConfirm, closeoutMissing as closeoutMissingCount, closeoutShown, statusPill, coStatusWords, billedWork, progressFigures, shortPayable, shortPayLabel, shortPayAttrs, clientTypeLabel, waiverKindLabel } from "../jobs.js";
+import { unpaidPayApps, payAppNames, shortDay, jobPageActions, oneLumpLine, lumpDollars, closeBlockerActions, finalPayAppConfirm, closeoutMissing as closeoutMissingCount, closeoutShown, statusPill, coStatusWords, dollarBasis, progressFigures, shortPayable, shortPayLabel, shortPayAttrs, clientTypeLabel, waiverKindLabel } from "../jobs.js";
 import { sovProgressHtml } from "../sov.js";
 import { pathFor } from "../routes.js";
 import { moreButton, askConfirm, focusAfterDraw } from "../dom.js";
@@ -104,9 +104,8 @@ function progressPreviewText(j, typed = draftValue("progress", progressInput(), 
 // The progress card for a job billed in dollars: where the job stands, three ways to say how
 // far it got, what the pay app comes to, and "All of it" for the last one.
 function progressFormHtml(j, openDraft, lump = null) {
-  const m = j.money;
-  const base = billedWork(j);
-  const pctBilled = m.contract_total_cents ? Math.round(base * 100 / m.contract_total_cents) : 0;
+  const { base, total } = dollarBasis(j);
+  const pctBilled = total ? Math.round(base * 100 / total) : 0;
   if (lump && progressMode === "percent") progressMode = "period";
   const mode = (key, label) => `<button class="${progressMode === key ? "btn" : "btn secondary"} small" data-action="progress-mode" data-mode="${key}" aria-pressed="${progressMode === key}">${label}</button>`;
   const input = progressMode === "percent"
@@ -115,7 +114,7 @@ function progressFormHtml(j, openDraft, lump = null) {
       ? moneyField({ form: "progress", name: "completed_cents", id: "progress-amt", label: "Total done so far ($)", help: "All the work done to date, not just this draw." })
       : moneyField({ form: "progress", name: "period_cents", id: "progress-draw", label: "This draw ($)", help: "The work done since the last pay app, before retainage." });
   return `<div class="card form-card" data-form-key="progress"><h2>${termText("Progress pay app")}</h2>
-    <p class="sub progress-context">Billed so far ${money(base)} of ${money(m.contract_total_cents)} contract (${pctBilled}%).</p>
+    <p class="sub progress-context">Billed so far ${money(base)} of ${money(total)} contract (${pctBilled}%).</p>
     ${openDraft && openDraft.pencil_status !== "sent" ? `<p class="sub">This replaces ${openDraft.number} (${money(openDraft.amount_cents)}). Its number and supporting documents stay.</p>` : ""}
     <div class="filter-bar progress-modes" role="group" aria-label="Enter">${mode("period", "This draw $")}${mode("total", "Total done so far $")}${lump ? "" : mode("percent", "% complete")}</div>
     ${formErrorLine("progress")}<div class="form-row">

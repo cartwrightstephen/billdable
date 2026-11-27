@@ -289,12 +289,26 @@ export function billedWork(j) {
     .reduce((sum, i) => sum + Number(i.gross_cents ?? (i.amount_cents + (i.retainage_cents || 0))), 0);
 }
 
+// What the dollar form counts from: what is billed, out of what, and the retainage percent the
+// draft would hold. A one-line schedule billed in dollars reads its line (what pay apps that went
+// billed on it, its scheduled value and its own percent), not the whole job: a change order billed
+// unsigned is in the pay apps' work but not on the line. The open draft's percent for this period
+// (domain/payapp_core.py) goes before the line's and the job's.
+export function dollarBasis(j) {
+  const line = oneLumpLine(j);
+  const draft = (j.invoices || []).find(i => DRAFTS.includes(i.status));
+  const override = draft && draft.retainage_pct_override != null ? Number(draft.retainage_pct_override) : null;
+  const own = line && line.retainage_pct != null ? Number(line.retainage_pct) : (Number(j.retainage_pct) || 0);
+  return line
+    ? { base: Number(line.sent_cents ?? billedWork(j)), total: line.scheduled_cents, pct: override ?? own }
+    : { base: billedWork(j), total: j.money.contract_total_cents, pct: override ?? own };
+}
+
 // The progress form (R3-01): what was typed, in one of three ways, as the pay app it drafts.
 // mode: "period" (this draw $, the default), "total" (total done so far $) or "percent" (% complete).
 // Returns {field, completed, period, retained, net, error}; field is the request key the number goes in.
-export function progressFigures(j, mode, text) {
-  const base = billedWork(j);
-  const total = j.money.contract_total_cents;
+export function progressFigures(j, mode, text, basis = dollarBasis(j)) {
+  const { base, total } = basis;
   const out = { field: mode === "period" ? "period_cents" : "completed_cents", completed: null, period: null, retained: 0, net: null, error: "" };
   if (mode === "percent") {
     const pct = percentFrom(text);
@@ -312,7 +326,7 @@ export function progressFigures(j, mode, text) {
   // Unsigned change orders put on the bill ride on the same pay app (domain.draft_invoice).
   const cos = (j.change_orders || []).filter(co => co.status === "pending" && co.included_in_billing).reduce((s, co) => s + co.amount_cents, 0);
   const gross = out.period + cos;
-  const pct = Number(j.retainage_pct) || 0;
+  const pct = basis.pct;
   out.gross = gross;
   out.retained = pct ? Math.floor((gross * pct + 50) / 100) : 0;
   out.net = gross - out.retained;
@@ -357,7 +371,7 @@ export function oneLumpLine(j) {
 // Returns {error, done, amount, figures}.
 export function lumpDollars(j, mode, text) {
   const line = oneLumpLine(j);
-  const f = progressFigures({ ...j, money: { ...j.money, contract_total_cents: line ? line.scheduled_cents : j.money.contract_total_cents } }, mode, text);
+  const f = progressFigures(j, mode, text);
   if (!line || f.error) return { error: f.error || "This job's schedule has more than one line.", done: "", amount: "", figures: f };
   const milli = Math.floor(f.completed * 1000 / line.scheduled_cents);
   return { error: "", done: (milli / 1000).toFixed(3), amount: (f.period / 100).toFixed(2), figures: f };
