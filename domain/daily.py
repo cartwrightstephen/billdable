@@ -113,13 +113,16 @@ def _amount(value: Any, field: str, label: str) -> int:
 
 
 def clean_daily_details(state: dict[str, Any], job: dict[str, Any], body: dict[str, Any],
-                        credit: dict[str, int] | None = None, gate_over: bool = False) -> dict[str, Any]:
+                        credit: dict[str, int] | None = None, gate_over: bool = False,
+                        own: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     """The daily record's fields beyond the Diary, checked: crew, weather, materials, deliveries,
     the ticked sections and the files already on the job record. Raises GateError under the field.
     A quantity more than what is left on its line is a soft gate (Nov 26: 2 sinks on a 1-each line
     went through): refused with over_schedule saying which, unless body["over_ok"] says to record
     it anyway; gate_over is the form's save (an import or a script records what it is given).
-    credit: what this record already added to each line, on Edit (it is left again)."""
+    credit: what this record already added to each line, on Edit (it is left again). own: the
+    record's own quantity rows by line, on Edit: a lump sum's % done to date typed as it was saved
+    is that row again, not a new step up (Nov 27 hunt: saving an Edit wiped the % it had recorded)."""
     from domain import GateError, _refuse, parse_int
     import sov
     out: dict[str, Any] = {}
@@ -174,7 +177,15 @@ def clean_daily_details(state: dict[str, Any], job: dict[str, Any], body: dict[s
             if to_date:
                 # New job record asks a lump sum's % done to date, the figure a foreman knows (Round 1):
                 # what is recorded is the step up from the field total. Lower is a correction, not a record.
+                prev = (own or {}).get(line["id"])
+                if prev is not None and prev.get("to_date_milli") == amount:
+                    rows.append(dict(prev))   # Edit: the % this record set, unchanged
+                    continue
                 current = _field_floor(job, line)
+                if prev is not None and prev.get("to_date_milli") == current:
+                    # Edit of the record that set the line where it is now: its own step up comes off
+                    # first, so it can be changed either way. A later record's % stays the floor.
+                    current = max(0, current - int((credit or {}).get(line["id"], 0)))
                 if amount < current:
                     _refuse("", {field: f"{line['description']} is at {sov.fmt_qty(current * 100)}% done already. Enter that or more, "
                                         "or lower it with Correct field total on the job's Schedule of values card."})
@@ -722,9 +733,9 @@ def update_job_record(state: dict[str, Any], job_id: str, daily_id: str, notes: 
     credit: dict[str, int] = {}
     for row in old_rows:
         credit[row["line_id"]] = credit.get(row["line_id"], 0) + int(row["qty_milli"])
-    extra = clean_daily_details(state, job, details, credit=credit, gate_over=True)
-    new_q = (extra.get("sections") or {}).get("quantities") or []
     before_q = (rec.get("sections") or {}).get("quantities") or []
+    extra = clean_daily_details(state, job, details, credit=credit, gate_over=True, own={r["line_id"]: r for r in before_q})
+    new_q = (extra.get("sections") or {}).get("quantities") or []
     if not _same_quantities(before_q, new_q):
         sent = [inv for inv in sov.live_invoices(job) if inv.get("status") not in DRAFT_STATUSES and str(inv.get("created_at") or "") >= str(rec.get("at") or "")]
         if old_rows and sent:

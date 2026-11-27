@@ -139,5 +139,47 @@ class EditTests(unittest.TestCase):
         self.assertEqual(self.daily["notes"], "Typo fixed")
 
 
+class LumpSumEditTests(unittest.TestCase):
+    """Edit on a job record that set a lump sum's % done to date (Nov 27 hunt): the form sends the %
+    back as it was saved, and that is no change; saving it wiped the line to 0%."""
+
+    def setUp(self):
+        self.state = new_state()
+        self.job = sov_job(self.state)
+        self.id = self.job["id"]
+        self.panel = line(self.job, "2")
+
+    def record(self, notes, pct):
+        domain.save_job_record(self.state, self.id, notes, "Ana", {"today": domain.local_today(),
+                               "sections": {"quantities": [{"line_id": self.panel["id"], "qty": pct, "to_date": True}]}}, gate_over=True)
+        return self.state["daily_records"][-1]
+
+    def edit(self, daily, notes, pct):
+        domain.update_job_record(self.state, self.id, daily["id"], notes, "Ana", {"today": domain.local_today(),
+                                 "sections": {"quantities": [{"line_id": self.panel["id"], "qty": pct, "to_date": True}]}})
+
+    def test_the_same_percent_keeps_the_line_where_it_is(self):
+        daily = self.record("Panel set", "40")
+        self.edit(daily, "Panel set, typo fixed", "40")
+        self.assertEqual(sov.field_total(self.panel), 400)
+        self.assertEqual(daily["notes"], "Panel set, typo fixed")
+
+    def test_the_record_that_set_it_can_lower_or_raise_it(self):
+        daily = self.record("Panel set", "40")
+        self.edit(daily, "Panel set", "30")
+        self.assertEqual(sov.field_total(self.panel), 300)
+        self.edit(daily, "Panel set", "55")
+        self.assertEqual(sov.field_total(self.panel), 550)
+
+    def test_an_older_record_keeps_a_later_one_as_its_floor(self):
+        first = self.record("Panel set", "40")
+        self.record("Panel wired", "65")
+        self.edit(first, "Panel set, typo fixed", "40")
+        self.assertEqual(sov.field_total(self.panel), 650, "the later 65% stays")
+        with self.assertRaises(domain.GateError):
+            self.edit(first, "Panel set", "50")
+        self.assertEqual(sov.field_total(self.panel), 650)
+
+
 if __name__ == "__main__":
     unittest.main()
