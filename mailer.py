@@ -233,6 +233,18 @@ def invite_email(inviter: str, inviter_email: str, company_name: str, role: str,
             "If you don't know this person, ignore this email.")
 
 
+def invite_existing_email(inviter: str, inviter_email: str, company_name: str, sign_in: str) -> tuple[str, str]:
+    """(subject, body) for an invite to an address that already has a Duracash account: one
+    account belongs to one company, so it can't join; the inviter is told only "Invite sent"."""
+    flat = lambda text, n: " ".join(str(text).split())[:n]
+    return ("You're invited to a team on Duracash",
+            f"{flat(inviter, 80)} ({inviter_email}) invited you to join the company \"{flat(company_name, 80)}\" on Duracash.\n\n"
+            "Your email address already has a Duracash account, and an account belongs to one company, so it can't join "
+            "another. To join their team, ask them to invite a different email address of yours.\n\n"
+            f"Your own account is unchanged; sign in here: {sign_in}\n\n"
+            "If you don't know this person, ignore this email.")
+
+
 def password_change_email(name: str, code: str) -> tuple[str, str]:
     """(subject, body) of the code that confirms a password change (S2)."""
     return ("Your Duracash code to change your password",

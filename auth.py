@@ -1143,9 +1143,13 @@ def _check_profile(profile_id: Any, profiles: Any) -> str:
 
 
 def create_invite(company_id: str, email: Any, role: Any, invited_by: str, actor_id: str = "",
-                  profiles: Any = ROLES, managers: Any = (OWNER_PROFILE,), grantable: Any = None) -> tuple[str, dict[str, Any]]:
+                  profiles: Any = ROLES, managers: Any = (OWNER_PROFILE,), grantable: Any = None,
+                  uniform: bool = False) -> tuple[str, dict[str, Any]]:
     """Invite someone with a profile (role: the profile id; profiles: the ids that exist;
-    grantable: those the inviting person may give, None for any)."""
+    grantable: those the inviting person may give, None for any). uniform (a server that sends
+    mail, as sign-up's L3): an address that already has an account in another company is invited
+    like any other, so the inviter can't learn who has one; the invite says existing_account, for
+    the server to email that person what to do instead, and accepting it is refused."""
     if not isinstance(email, str) or not EMAIL_RE.match(email.strip()):
         raise AuthError("Enter the person's email address.")
     profile_id = _check_profile(role, profiles)
@@ -1160,7 +1164,10 @@ def create_invite(company_id: str, email: Any, role: Any, invited_by: str, actor
             raise AuthError(ONLY_OWNERS_MAKE_OWNERS)
         if grantable is not None and profile_id not in set(grantable):
             raise AuthError(MORE_THAN_YOURS)
-        if any(u["email"] == email for u in data["users"]):
+        existing = next((u for u in data["users"] if u["email"] == email), None)
+        if existing and existing["company_id"] == company_id:
+            raise AuthError("That person is already on this team.")
+        if existing and not uniform:
             raise AuthError("That email already has a Duracash account. Each person belongs to one company.")
         pending = [v for v in data["tokens"].values() if v["kind"] == "invite" and v.get("company_id") == company_id]
         if len(pending) >= 20:
@@ -1172,7 +1179,7 @@ def create_invite(company_id: str, email: Any, role: Any, invited_by: str, actor
                          invited_by=invited_by, invited_by_id=actor_id)
         entry = data["tokens"][_digest(raw)]
         _save(data)
-        return raw, {"id": entry["id"], "email": email, "role": role, "profile_id": profile_id}
+        return raw, {"id": entry["id"], "email": email, "role": role, "profile_id": profile_id, "existing_account": bool(existing)}
 
 
 def invite_info(raw: Any) -> dict[str, Any] | None:

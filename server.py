@@ -2737,7 +2737,9 @@ class Handler(BaseHTTPRequestHandler):
                 raise auth.AuthError("20 invites a day is the limit. Try again tomorrow.")
             raw, invite = auth.create_invite(company_id, ctx.body.get("email"), ctx.body.get("profile_id") or ctx.body.get("role") or "member",
                                              user["name"], actor_id=user["id"], **self._team_rules(company_id),
-                                             grantable=profiles.grantable(user, company_state(company_id)))
+                                             grantable=profiles.grantable(user, company_state(company_id)),
+                                             uniform=self._uniform_signup())
+            existing = invite.pop("existing_account", False)
             invite["profile_name"] = profiles.profile_name(company_state(company_id), invite["profile_id"])
             url = app_url()
             note = {"invite_path": f"/#invite={raw}", "invite_link": f"{url}/#invite={raw}" if url else None, "emailed": False,
@@ -2747,9 +2749,17 @@ class Handler(BaseHTTPRequestHandler):
             if url:
                 with company_lock(company_id):
                     company_name = load_company(company_id).get("company", {}).get("name", "")
-                subject, text = mailer.invite_email(user["name"], user["email"], company_name, invite["profile_name"], f"{url}/#invite={raw}")
+                if existing:
+                    # An address with an account elsewhere (only on a server that sends mail): it is
+                    # told what to do instead, and the inviter sees what any invite shows.
+                    subject, text = mailer.invite_existing_email(user["name"], user["email"], company_name, f"{url}/")
+                else:
+                    subject, text = mailer.invite_email(user["name"], user["email"], company_name, invite["profile_name"], f"{url}/#invite={raw}")
                 status = self._system_email(invite["email"], subject, text, company_id=company_id)
                 note.update({"emailed": status == "sent", "email_status": status})
+                if status == "sent":
+                    # Emailed: the link is the invitee's, not the inviter's to try out (L3).
+                    note.update({"invite_path": None, "invite_link": None})
             return f"{user['name']} invited {invite['email']} as {invite['profile_name']}.", note
 
         self._team_change(ctx, invite)

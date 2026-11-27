@@ -180,5 +180,29 @@ class BrokenEmailsAreReadNotCrashed(ServerCase):
             self.assertEqual(res.status, 303)
 
 
+class InvitesDontRevealAccounts(ServerCase):
+    """An invite answers the same whether or not the address has an account (as sign-up, L3)."""
+
+    def test_the_same_reply_and_the_person_is_told_what_to_do(self):
+        self.mail_on()
+        owner, _ = self.signup("inv-owner@pine.example")
+        self.signup("inv-taken@elsewhere.example", "Elsewhere Co")
+        replies = {}
+        for addr in ("inv-taken@elsewhere.example", "inv-new@pine.example"):
+            res, out = self.request("POST", "/api/team/invite", {"email": addr, "profile_id": "member"}, cookie=owner)
+            self.assertEqual(res.status, 200, out)
+            replies[addr] = {k: out[k] for k in ("emailed", "email_status", "invite_path", "invite_link")}
+            self.assertIn(addr, [i["email"] for i in out["invites"]], "listed with the open invites, as any invite")
+        self.assertEqual(replies["inv-taken@elsewhere.example"], replies["inv-new@pine.example"])
+        self.assertEqual(replies["inv-new@pine.example"], {"emailed": True, "email_status": "sent", "invite_path": None, "invite_link": None})
+        text = self.mail_to("inv-taken@elsewhere.example", "already has a Duracash account")
+        self.assertIsNotNone(text)
+        self.assertNotIn("#invite=", text, "no link that can't work")
+        self.assertIsNotNone(self.mail_to("inv-new@pine.example", "#invite="))
+        # Someone already on this team is said to be, as the team list shows anyway.
+        res, out = self.request("POST", "/api/team/invite", {"email": "inv-owner@pine.example"}, cookie=owner)
+        self.assertEqual((res.status, out["error"]), (409, "That person is already on this team."))
+
+
 if __name__ == "__main__":
     unittest.main()
