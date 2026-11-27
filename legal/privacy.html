@@ -13,11 +13,13 @@
   <li><strong>Signatures and approvals:</strong> when you approve a pay app, or a customer signs a change order or approves a pay app through a link you sent, we record the name typed, the time, the network (IP) address and the browser it came from, as evidence of the signature.</li>
   <li><strong>Billing:</strong> if your company subscribes, Stripe collects the card or bank details; we never see or store them. We keep the Stripe customer and subscription ids, the plan and its status.</li>
   <li><strong>QuickBooks Online:</strong> if an owner connects QuickBooks, we keep the access tokens Intuit issues (encrypted), read customers, invoices and payments from it to match payments to pay apps, and create an invoice in it for each pay app your company sends there.</li>
+  <li><strong>DocuSign:</strong> if your company connects DocuSign, the documents you send for signing (pay apps, change orders, lien waivers) and the names and email addresses of the people signing them go to DocuSign so they can sign; we keep the access tokens DocuSign issues (encrypted) and the signed copies and certificates it returns.</li>
   <li><strong>Questions to the helper:</strong> the question, the screen you were on, your account and company, and whether you marked the answer helpful.</li>
 </ul>
 <h3>Created as you use Duracash</h3>
 <ul>
   <li><strong>Outbox:</strong> for each email approved to send, the recipient, subject, text, attachments and what happened to it.</li>
+  <li><strong>Email open tracking:</strong> off by default. If your company turns it on, each recipient's copy of an email carries a small image, and we record when it loads (which most mail programs do when the email is opened, though some load images ahead or block them) as Opened in the Outbox.</li>
   <li><strong>Audit trail:</strong> what was done in your company account, by whom and when.</li>
   <li><strong>Server logs:</strong> for each request, the time, the page or action requested (with secret parts of addresses removed), the result and how long it took. Our request logs don't record IP addresses (signatures and approvals do, as above, and sign-in limits count tries per address in memory); our hosting provider may record them in its own logs.</li>
   <li><strong>Sessions:</strong> for each signed-in session, when it started and was last used and the kind of browser, so you can see your sessions in Settings, My account and sign the others out.</li>
@@ -38,7 +40,7 @@
 <ul>
   <li><strong>Your team:</strong> everyone on your company account can see the company's data.</li>
   <li><strong>Recipients you approve:</strong> the emails, documents and attachments you approve go to the addresses on them.</li>
-  <li><strong>Service providers</strong> who run parts of Duracash for us under contract: our hosting provider (Render); our off-site backup storage provider (an S3-compatible service such as Backblaze B2, Cloudflare R2 or Amazon S3), which holds only encrypted copies it cannot read; our email delivery provider; Stripe, for subscription billing; and, if your company uses them, Intuit (QuickBooks Online), text-message and inbound-email providers. They may only use the information to provide their service to us.</li>
+  <li><strong>Service providers</strong> who run parts of Duracash for us under contract: our hosting provider (Render); our off-site backup storage provider (an S3-compatible service such as Backblaze B2, Cloudflare R2 or Amazon S3), which holds only encrypted copies it cannot read; our email delivery provider; Stripe, for subscription billing; and, if your company uses them, Intuit (QuickBooks Online), DocuSign, text-message and inbound-email providers. They may only use the information to provide their service to us.</li>
   <li><strong>Legal and safety:</strong> when the law requires it, or to protect the rights, property or safety of our users, the public or us.</li>
   <li><strong>Business transfer:</strong> if Duracash is merged, acquired or sold, information may transfer as part of that deal, under this policy's protections.</li>
 </ul>
