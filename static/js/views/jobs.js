@@ -480,6 +480,7 @@ export const views = {
             ${f({ name: "note", id: "nj-note", label: "Notes (kept in the job records)", helpKey: "job_notes", multiline: true, wide: true, placeholder: "Gate code, who to call, contract notes" })}
           </div>
           ${newJobSovHtml()}
+          <label class="check-line"><input type="checkbox" id="nj-earlier"> This job already has pay apps: enter them on the job page next</label>
           <button class="btn" data-action="create-job">Save job</button>
         </div>` : ""}
       ${open.length ? `<div class="table-wrap">
@@ -585,6 +586,7 @@ export const actions = {
     }
     if (refuseForm("newjob", errors)) return;
     const before = new Set(state.jobs.map(j => j.id));
+    const earlier = !!document.getElementById("nj-earlier")?.checked;   // started mid-project (Nov 27)
     const r = await post("/api/jobs", {
       sov_lines: sovRead ? sovRead.lines : newJobSovLines(v),
       name: v.name, street: v.street, city: v.city, state: v.state, zip: v.zip, customer, approver,
@@ -611,6 +613,7 @@ export const actions = {
     if (made) {
       await fileContract(made.id, read);
       nav("job", made.id);
+      if (earlier) { formOpen.earlier = true; render(); document.getElementById("earlier-card")?.scrollIntoView?.({ block: "start" }); }
     }
   },
   // ...or keep it as a new job of the same name, on purpose.

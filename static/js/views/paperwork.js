@@ -460,7 +460,7 @@ function gatePill(p, isCloseout) {
 }
 export function softAnswerText(p) {
   const c = p.soft_check || {};
-  const stored = /stored materials/i.test(unesc(p.soft_question || ""));
+  const stored = /stored materials/i.test(unesc(p.soft_question || "")) && !(p.covers || []).length;
   const said = stored ? (c.answer === "not_needed" ? "No stored materials this period" : "Stored materials are on this pay app")
     : c.answer === "not_needed" ? "Not needed this time" : "Checked";
   return `${said}: ${c.by || ""}, ${fmtDate(c.at)}${c.note ? ` (${c.note})` : ""}`;
@@ -472,14 +472,17 @@ export function softChecksHtml(j, inv) {
   const packet = inv.packet || [];
   const soft = packet.filter(p => p.required && !p.present && !p.skipped_reason && isSoft(p));
   if (!soft.length) return "";
-  const stored = (p) => /stored materials/i.test(unesc(p.soft_question || ""));
+  // Stored materials with none billed yet ask whether any came in: Yes opens their boxes on the
+  // Progress pay app page (Nov 27). Once billed, the item asks about each line's backup instead.
+  const stored = (p) => /stored materials/i.test(unesc(p.soft_question || "")) && !(p.covers || []).length;
   return `<div class="send-soft" id="soft-checks">
       <h3>Check before it goes (${soft.length})</h3>
       ${soft.map(p => `<div class="list-item soft-check" data-item="${p.id}">
         <p>${p.soft_question || p.label}</p>
         ${p.soft_check ? `<p class="sub">${softAnswerText(p)} <button class="linkish" data-action="packet-soft-check" data-id="${j.id}" data-item="${p.id}" data-answer="">Change</button></p>`
           : `<div class="form-inline">
-          <button class="btn small secondary" data-action="packet-soft-check" data-id="${j.id}" data-item="${p.id}" data-answer="checked">${stored(p) ? "Yes, they're on this pay app" : "Checked"}</button>
+          ${stored(p) ? `<button class="btn small secondary" data-action="stored-enter" data-id="${j.id}">Yes, enter them</button>`
+            : `<button class="btn small secondary" data-action="packet-soft-check" data-id="${j.id}" data-item="${p.id}" data-answer="checked">Checked</button>`}
           <button class="btn small secondary" data-action="packet-soft-check" data-id="${j.id}" data-item="${p.id}" data-answer="not_needed">${stored(p) ? "None this period" : "Not needed this time"}</button>
         </div>`}
       </div>`).join("")}

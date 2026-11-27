@@ -308,6 +308,22 @@ async function sovProgress(jobId) {
     const before = line && line.stored_cents ? (line.stored_cents / 100).toFixed(2) : "";
     if (raw !== before) stored[el.dataset.sovs] = raw || "0";
   });
+  // Work past where materials were stored may have used them (G703: stored moves into work done
+  // when installed, Nov 27): asked line by line, so they aren't billed twice.
+  const viewLines = state.jobs.find(j => j.id === jobId)?.sov_view?.lines || [];
+  for (const line of viewLines) {
+    const id = unesc(line.id);
+    if (!line.stored_cents || id in stored || !(id in done)) continue;
+    const qty = Math.min(sovMilli(done[id]), line.qty_milli);
+    const from = line.stored_qty_milli ?? line.sent_qty_milli ?? 0;
+    if (!(qty > from)) continue;
+    const value = (q) => (q >= line.qty_milli ? line.scheduled_cents : sovExtend(q, line.rate_cents));
+    const move = Math.min(line.stored_cents, value(qty) - value(from));
+    if (move <= 0) continue;
+    if (await askConfirm(`${unesc(line.description)}: ${money(line.stored_cents)} of materials are stored on this line. Did this work install ${money(move)} of them? Moving them to work done keeps them from being billed twice.`, "Move to installed")) {
+      stored[id] = ((line.stored_cents - move) / 100).toFixed(2);
+    }
+  }
   const notes = document.querySelector("#progress-notes")?.value || "";
   const r = await post(`/api/jobs/${jobId}/sov-progress`, { done, stored, notes, period_to: formValues("sovprogress").period_to || "" }, { formKey: "sovprogress" });
   if (r && r.ok) { formOpen.progress = false; progressDone(jobId); }
